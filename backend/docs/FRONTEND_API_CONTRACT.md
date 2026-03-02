@@ -1,10 +1,14 @@
 # WaxWatch Frontend API Contract
 
-**Contract version:** `2026-03-02.1`
+**Contract version:** `2026-03-02.2`
 
 This contract captures **current API behavior** and maps it to intended React surfaces so frontend can scaffold screens directly from OpenAPI payloads.
 
 ## Changelog
+
+- `2026-03-02.2`
+  - Added explicit frontend contract coverage for `POST /api/search` including `SearchQuery` request validation expectations, `SearchResponse` payload shape, auth/rate-limit (`scope=search`) behavior, and search-results UX action mapping.
+  - Added explicit frontend contract coverage for `POST /api/search/save-alert` including `SaveSearchAlertRequest`, `WatchRuleOut` response semantics, and how saved alerts surface in the Alerts list backed by `GET /api/watch-rules`.
 
 - `2026-03-02.1`
   - Clarified provider-request summary error semantics: `error_requests` now includes HTTP failures (`status_code >= 400`) and transport/network failures where `status_code` is null but `error` is non-empty, for both user and admin summary endpoints.
@@ -208,6 +212,52 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 ---
 
 ## 4) Endpoint → React Screen + Action Map
+
+## 4.0 Search + Save Alert
+
+### `POST /api/search`
+- **Screen:** `SearchResultsScreen` (search submit + filter changes + pagination).
+- **Action:** Execute listing search against configured providers and render paged aggregated results.
+- **Auth + throttling contract:**
+  - Requires authenticated bearer token (`get_current_user_id` dependency).
+  - Protected by rate limiting with `error.details.scope = "search"` for `429` responses on `/api/search*` routes.
+  - Frontend should honor `Retry-After` and suppress aggressive auto-retries when throttled.
+- **Request body contract (`SearchQuery`):**
+  - `keywords`: `string[]`, defaults to `[]`.
+  - `providers`: optional `string[]`; values are trimmed/lowercased, must be valid+enabled provider keys, duplicates are removed while preserving order, and an all-empty/invalid list fails validation.
+  - `min_price`: optional `number >= 0`.
+  - `max_price`: optional `number >= 0`; if both bounds are present, `max_price >= min_price` is required.
+  - `min_condition`: optional non-empty string (`1..30` chars).
+  - `page`: `integer >= 1`, default `1`.
+  - `page_size`: `integer 1..100`, default `24`.
+- **Response contract (`SearchResponse`):**
+  - `items[]`: listing rows (`SearchListingOut`) containing `id`, optional `listing_id`, `provider`, `external_id`, `title`, `url`, computed `public_url`, `price`, `currency`, optional `condition`, optional `seller`, optional `location`, optional `discogs_release_id`.
+  - `pagination`: `{ page, page_size, total, returned, total_pages, has_next }`.
+  - `providers_searched`: `string[]` in attempted-provider order.
+  - `provider_errors`: object map `{ [provider: string]: errorMessage }` for partial-provider failures.
+- **UX mapping guidance:**
+  - Search form submit/filter edits call this endpoint and replace result set.
+  - Pagination controls update `page` while keeping current filters.
+  - If `provider_errors` is non-empty, show non-blocking per-provider warning UI while still rendering available `items`.
+  - Result-row external navigation should use `public_url` for outbound/open-listing actions.
+
+### `POST /api/search/save-alert`
+- **Screen:** `SearchResultsScreen` secondary action (`Save this search`) and `AlertCreateModal`.
+- **Action:** Persist current search criteria as an alert/watch rule.
+- **Auth + throttling contract:**
+  - Requires authenticated bearer token.
+  - Shares `/api/search*` throttling policy (`scope=search`) and `429` handling semantics.
+- **Request body contract (`SaveSearchAlertRequest`):**
+  - `name`: required `string` length `1..120`.
+  - `query`: required `SearchQuery` object (same validation/normalization rules as `POST /api/search`).
+  - `poll_interval_seconds`: optional integer, default `600`, bounded `30..86400`.
+- **Response contract (`WatchRuleOut`):**
+  - Returns created alert object with fields: `id`, `user_id`, `name`, `query`, `is_active`, `poll_interval_seconds`, `last_run_at`, `next_run_at`, `created_at`, `updated_at`.
+  - Backend maps saved-search `query.providers` into watch-rule `query.sources` so the alert is immediately compatible with watch-rule execution/list APIs.
+- **Alerts UX relation (`/api/watch-rules`):**
+  - After successful save, frontend can optimistically insert returned `WatchRuleOut` into Alerts state or refetch `GET /api/watch-rules`.
+  - Saved searches appear as normal entries in `AlertsListScreen` because they are persisted as watch rules.
+  - Subsequent edit/disable/delete flows use the existing `/api/watch-rules/{rule_id}*` endpoints.
 
 ## 4.1 Profile / Account
 
