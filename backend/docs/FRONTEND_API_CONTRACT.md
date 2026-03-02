@@ -1,10 +1,14 @@
 # WaxWatch Frontend API Contract
 
-**Contract version:** `2026-03-02.2`
+**Contract version:** `2026-03-02.3`
 
 This contract captures **current API behavior** and maps it to intended React surfaces so frontend can scaffold screens directly from OpenAPI payloads.
 
 ## Changelog
+
+- `2026-03-02.3`
+  - Normalized the two watch-rule validation error examples in section `4.3 Watch List / Alert CRUD` to use `"message": "validation error"`, matching backend `validation_exception_handler` error payloads.
+  - Confirmed all error examples in this contract follow the section `3.1 Error format (global)` envelope shape (`error.message`, `error.code`, `error.status`, optional `error.details`).
 
 - `2026-03-02.2`
   - Added explicit frontend contract coverage for `POST /api/search` including `SearchQuery` request validation expectations, `SearchResponse` payload shape, auth/rate-limit (`scope=search`) behavior, and search-results UX action mapping.
@@ -435,7 +439,7 @@ The API has two watch paradigms; frontend can present both under a single “Ale
 {
   "error": {
     "code": "validation_error",
-    "message": "Validation failed",
+    "message": "validation error",
     "status": 422,
     "details": [
       {
@@ -452,7 +456,7 @@ The API has two watch paradigms; frontend can present both under a single “Ale
 {
   "error": {
     "code": "validation_error",
-    "message": "Validation failed",
+    "message": "validation error",
     "status": 422,
     "details": [
       {
