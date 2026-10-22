@@ -51,7 +51,7 @@
     "next": "^15.5.12",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-error-boundary": "^6.1.1",
+    "react-error-boundary": "^6.1.6",
     "client-only": "file:vendor/client-only",
     "@tanstack/react-query": "file:vendor/tanstack-react-query"
   },
