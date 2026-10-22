@@ -1,10 +1,15 @@
 # WaxWatch Frontend API Contract
 
-**Contract version:** `2026-03-16.0`
+**Contract version:** `2026-10-22.0`
 
 This contract captures **current API behavior** and maps it to intended React surfaces so frontend can scaffold screens directly from OpenAPI payloads.
 
 ## Changelog
+
+- `2026-10-22.0`
+  - `POST /api/auth/login` is now implemented by the backend (backend contract section `4.7`): Supabase password grant + httpOnly `waxwatch_session` cookie; protected endpoints accept that cookie when no bearer header is sent.
+  - Documented the backend's actual login error codes/statuses (section `4.0`), including `503` provider/configuration failures and the `origin_not_allowed` CSRF guard for cookie sessions.
+  - `contracts/openapi.snapshot.json`, `reference/openapi.snapshot.json`, and `reference/FRONTEND_API_CONTRACT_BACKEND.md` are now verbatim copies of the backend files (Prettier-ignored), enforced by the repo-root `contract-sync` workflow.
 
 - `2026-03-16.2`
   - Harmonized auth wording to platform-specific defaults: web uses cookie/session auth where applicable; mobile/native uses bearer auth.
@@ -341,11 +346,14 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 }
 ```
 
-- **Success (`200`)**: login accepted; frontend redirects to resolved success destination (`return_to` or handoff callback URL with security params).
-- **Credential failure (`401` or `403`)**: render `Invalid email or password.`
+- **Backend behavior:** the API exchanges `email`/`password` with Supabase Auth (password grant) and sets an httpOnly `waxwatch_session` cookie (`Secure`, `SameSite=Lax`, `Path=/`, `Max-Age` = access-token lifetime). The token is never in the JSON body. `handoff`/`state`/`nonce`/`expires_at` are accepted but not validated or used to mint tokens by the backend; this client remains responsible for handoff checks.
+- **Success (`200`, `LoginResponse`)**: `{ "success": true, "redirect_to": "/..." }` where `redirect_to` is `return_to` when it is a same-origin relative path, else `/`. Frontend redirects to resolved success destination (`return_to` or handoff callback URL with security params).
+- **Credential failure (`401` or `403`)**: render `Invalid email or password.` Backend codes: `401 invalid_credentials`, `403 email_not_confirmed`, `403 account_inactive`, `403 origin_not_allowed`.
 - **Contracted error-envelope override:** if `error.code` or `error.type` equals `invalid_credentials`, frontend renders `Invalid email or password.` even when status is not `401/403` (for backend compatibility).
 - **Validation failure (`422`)**: frontend shows backend envelope message when present (`error.message`).
-- **Rate limit (`429`)**: frontend shows rate-limited state and uses `Retry-After` / `error.details.retry_after_seconds` when provided.
+- **Rate limit (`429`)**: frontend shows rate-limited state and uses `Retry-After` / `error.details.retry_after_seconds` when provided (`error.details.scope = "auth_endpoints"`).
+- **Provider/config failure (`503`)**: `auth_login_unavailable`, `auth_provider_unavailable`, or `auth_provider_error`; frontend shows the generic API error message.
+- **Session lifetime:** no refresh endpoint exists yet; once the access token expires, protected calls return `401` and the web app routes to sign-in.
 
 ## 4.1 Search + Save Alert
 
@@ -823,7 +831,8 @@ Enforcement in this frontend repository:
 
 Contract consistency checklist (auth mode drift prevention):
 
-- If auth mode assumptions change (for example cookie/session vs bearer defaults), update both `docs/FRONTEND_API_CONTRACT.md` and `reference/FRONTEND_API_CONTRACT_BACKEND.md` in the same PR.
+- If auth mode assumptions change (for example cookie/session vs bearer defaults), update both `docs/FRONTEND_API_CONTRACT.md` and the backend contract (`backend/docs/FRONTEND_API_CONTRACT.md`, mirrored verbatim to `reference/FRONTEND_API_CONTRACT_BACKEND.md`) in the same PR.
+- `contracts/openapi.snapshot.json`, `reference/openapi.snapshot.json`, and `reference/FRONTEND_API_CONTRACT_BACKEND.md` are generated mirrors: never hand-edit or Prettier-format them. Copy them from `backend/docs/` (after `make openapi-snapshot` in `backend/`); the repo-root `.github/workflows/contract-sync.yml` fails on any byte difference.
 - Re-verify endpoint-level exceptions (`/api/stream/events`, `/api/auth/login`, `/api/me/*`) are described identically in both files.
 
 ---

@@ -14,7 +14,9 @@
             "type": "boolean"
           }
         },
-        "required": ["deactivated_at"],
+        "required": [
+          "deactivated_at"
+        ],
         "title": "DeactivateAccountResponse",
         "type": "object"
       },
@@ -59,7 +61,9 @@
             "title": "Token Metadata"
           }
         },
-        "required": ["external_user_id"],
+        "required": [
+          "external_user_id"
+        ],
         "title": "DiscogsConnectIn",
         "type": "object"
       },
@@ -89,7 +93,12 @@
             "type": "string"
           }
         },
-        "required": ["provider", "external_user_id", "connected", "connected_at"],
+        "required": [
+          "provider",
+          "external_user_id",
+          "connected",
+          "connected_at"
+        ],
         "title": "DiscogsConnectOut",
         "type": "object"
       },
@@ -115,7 +124,10 @@
             "type": "string"
           }
         },
-        "required": ["provider", "disconnected"],
+        "required": [
+          "provider",
+          "disconnected"
+        ],
         "title": "DiscogsDisconnectOut",
         "type": "object"
       },
@@ -126,7 +138,11 @@
         "properties": {
           "source": {
             "default": "both",
-            "enum": ["wantlist", "collection", "both"],
+            "enum": [
+              "wantlist",
+              "collection",
+              "both"
+            ],
             "title": "Source",
             "type": "string"
           }
@@ -305,12 +321,21 @@
             "type": "integer"
           },
           "source": {
-            "enum": ["wantlist", "collection"],
+            "enum": [
+              "wantlist",
+              "collection"
+            ],
             "title": "Source",
             "type": "string"
           }
         },
-        "required": ["source", "limit", "offset", "count", "items"],
+        "required": [
+          "source",
+          "limit",
+          "offset",
+          "count",
+          "items"
+        ],
         "title": "DiscogsImportedItemListOut",
         "type": "object"
       },
@@ -347,7 +372,10 @@
             "type": "string"
           },
           "source": {
-            "enum": ["wantlist", "collection"],
+            "enum": [
+              "wantlist",
+              "collection"
+            ],
             "title": "Source",
             "type": "string"
           },
@@ -398,7 +426,10 @@
             "type": "string"
           }
         },
-        "required": ["state", "code"],
+        "required": [
+          "state",
+          "code"
+        ],
         "title": "DiscogsOAuthCallbackIn",
         "type": "object"
       },
@@ -450,7 +481,13 @@
             "type": "string"
           }
         },
-        "required": ["provider", "authorize_url", "state", "scopes", "expires_at"],
+        "required": [
+          "provider",
+          "authorize_url",
+          "state",
+          "scopes",
+          "expires_at"
+        ],
         "title": "DiscogsOAuthStartOut",
         "type": "object"
       },
@@ -461,7 +498,10 @@
             "type": "string"
           },
           "source": {
-            "enum": ["wantlist", "collection"],
+            "enum": [
+              "wantlist",
+              "collection"
+            ],
             "title": "Source",
             "type": "string"
           },
@@ -471,7 +511,11 @@
             "type": "string"
           }
         },
-        "required": ["watch_release_id", "source", "open_in_discogs_url"],
+        "required": [
+          "watch_release_id",
+          "source",
+          "open_in_discogs_url"
+        ],
         "title": "DiscogsOpenInDiscogsOut",
         "type": "object"
       },
@@ -521,8 +565,72 @@
             "type": "string"
           }
         },
-        "required": ["connected", "provider"],
+        "required": [
+          "connected",
+          "provider"
+        ],
         "title": "DiscogsStatusOut",
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorEnvelopeError"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "ErrorEnvelopeError": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "details": {
+            "title": "Details"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ErrorEnvelopeError",
         "type": "object"
       },
       "EventOut": {
@@ -657,7 +765,9 @@
             "type": "boolean"
           }
         },
-        "required": ["deleted_at"],
+        "required": [
+          "deleted_at"
+        ],
         "title": "HardDeleteAccountResponse",
         "type": "object"
       },
@@ -678,8 +788,119 @@
             "type": "integer"
           }
         },
-        "required": ["provider"],
+        "required": [
+          "provider"
+        ],
         "title": "IntegrationSummary",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "description": "Web login form payload (`POST /api/auth/login`).\n\n`return_to`, `handoff`, `state`, `nonce`, and `expires_at` are echoed by the web client for\nredirect/handoff bookkeeping. The backend only uses `return_to` (sanitized to a same-origin\nrelative path) to compute `redirect_to`; handoff fields are accepted for contract compatibility\nand are not used to mint tokens.",
+        "example": {
+          "email": "listener@example.com",
+          "password": "<redacted>",
+          "return_to": "/"
+        },
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "handoff": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handoff"
+          },
+          "nonce": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nonce"
+          },
+          "password": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          },
+          "return_to": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return To"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "LoginResponse": {
+        "properties": {
+          "redirect_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect To"
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "LoginResponse",
         "type": "object"
       },
       "LogoutResponse": {
@@ -695,12 +916,17 @@
             "type": "boolean"
           }
         },
-        "required": ["marker"],
+        "required": [
+          "marker"
+        ],
         "title": "LogoutResponse",
         "type": "object"
       },
       "NotificationChannel": {
-        "enum": ["email", "realtime"],
+        "enum": [
+          "email",
+          "realtime"
+        ],
         "title": "NotificationChannel",
         "type": "string"
       },
@@ -804,12 +1030,22 @@
         "type": "object"
       },
       "NotificationStatus": {
-        "enum": ["pending", "sent", "failed"],
+        "enum": [
+          "pending",
+          "sent",
+          "failed"
+        ],
         "title": "NotificationStatus",
         "type": "string"
       },
       "Provider": {
-        "enum": ["discogs", "ebay", "mock", "musicbrainz", "spotify"],
+        "enum": [
+          "discogs",
+          "ebay",
+          "mock",
+          "musicbrainz",
+          "spotify"
+        ],
         "title": "Provider",
         "type": "string"
       },
@@ -1007,7 +1243,12 @@
             "type": "integer"
           }
         },
-        "required": ["provider", "total_requests", "error_requests", "avg_duration_ms"],
+        "required": [
+          "provider",
+          "total_requests",
+          "error_requests",
+          "avg_duration_ms"
+        ],
         "title": "ProviderRequestSummaryOut",
         "type": "object"
       },
@@ -1030,7 +1271,10 @@
             "$ref": "#/components/schemas/SearchQuery"
           }
         },
-        "required": ["name", "query"],
+        "required": [
+          "name",
+          "query"
+        ],
         "title": "SaveSearchAlertRequest",
         "type": "object"
       },
@@ -1170,7 +1414,14 @@
             "type": "integer"
           }
         },
-        "required": ["page", "page_size", "total", "returned", "total_pages", "has_next"],
+        "required": [
+          "page",
+          "page_size",
+          "total",
+          "returned",
+          "total_pages",
+          "has_next"
+        ],
         "title": "SearchPagination",
         "type": "object"
       },
@@ -1278,7 +1529,11 @@
             "type": "array"
           }
         },
-        "required": ["items", "pagination", "providers_searched"],
+        "required": [
+          "items",
+          "pagination",
+          "providers_searched"
+        ],
         "title": "SearchResponse",
         "type": "object"
       },
@@ -1292,7 +1547,9 @@
             "type": "integer"
           }
         },
-        "required": ["unread_count"],
+        "required": [
+          "unread_count"
+        ],
         "title": "UnreadCountOut",
         "type": "object"
       },
@@ -1325,7 +1582,11 @@
           "delivery_frequency": {
             "anyOf": [
               {
-                "enum": ["instant", "hourly", "daily"],
+                "enum": [
+                  "instant",
+                  "hourly",
+                  "daily"
+                ],
                 "type": "string"
               },
               {
@@ -1483,7 +1744,13 @@
             "type": "string"
           }
         },
-        "required": ["id", "email", "is_active", "created_at", "updated_at"],
+        "required": [
+          "id",
+          "email",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
         "title": "UserProfileOut",
         "type": "object"
       },
@@ -1561,7 +1828,11 @@
             "type": "string"
           }
         },
-        "required": ["loc", "msg", "type"],
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
         "title": "ValidationError",
         "type": "object"
       },
@@ -1622,7 +1893,10 @@
           },
           "match_mode": {
             "default": "exact_release",
-            "enum": ["exact_release", "master_release"],
+            "enum": [
+              "exact_release",
+              "master_release"
+            ],
             "title": "Match Mode",
             "type": "string"
           },
@@ -1670,7 +1944,10 @@
             "title": "Year"
           }
         },
-        "required": ["discogs_release_id", "title"],
+        "required": [
+          "discogs_release_id",
+          "title"
+        ],
         "title": "WatchReleaseCreate",
         "type": "object"
       },
@@ -1737,7 +2014,10 @@
             "type": "boolean"
           },
           "match_mode": {
-            "enum": ["exact_release", "master_release"],
+            "enum": [
+              "exact_release",
+              "master_release"
+            ],
             "title": "Match Mode",
             "type": "string"
           },
@@ -1879,7 +2159,10 @@
           "match_mode": {
             "anyOf": [
               {
-                "enum": ["exact_release", "master_release"],
+                "enum": [
+                  "exact_release",
+                  "master_release"
+                ],
                 "type": "string"
               },
               {
@@ -1950,7 +2233,9 @@
           "query": {
             "max_price": 40,
             "q": "detroit techno",
-            "sources": ["discogs"]
+            "sources": [
+              "discogs"
+            ]
           }
         },
         "properties": {
@@ -1978,7 +2263,9 @@
             "type": "object"
           }
         },
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "title": "WatchRuleCreate",
         "type": "object"
       },
@@ -1994,7 +2281,9 @@
           "query": {
             "max_price": 40,
             "q": "detroit techno",
-            "sources": ["discogs"]
+            "sources": [
+              "discogs"
+            ]
           },
           "updated_at": "2026-01-20T12:00:00+00:00",
           "user_id": "8f2a5009-c0a2-4f90-8f1b-c1716c26bf06"
@@ -2077,157 +2366,6 @@
         "title": "WatchRuleOut",
         "type": "object"
       },
-      "LoginRequest": {
-        "properties": {
-          "email": {
-            "format": "email",
-            "title": "Email",
-            "type": "string"
-          },
-          "password": {
-            "minLength": 1,
-            "title": "Password",
-            "type": "string"
-          },
-          "return_to": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Return To"
-          },
-          "handoff": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Handoff"
-          },
-          "state": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "State"
-          },
-          "nonce": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Nonce"
-          },
-          "expires_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expires At"
-          }
-        },
-        "required": ["email", "password"],
-        "title": "LoginRequest",
-        "type": "object"
-      },
-      "LoginResponse": {
-        "properties": {
-          "success": {
-            "default": true,
-            "title": "Success",
-            "type": "boolean"
-          },
-          "redirect_to": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Redirect To"
-          }
-        },
-        "title": "LoginResponse",
-        "type": "object"
-      },
-      "ErrorEnvelope": {
-        "properties": {
-          "error": {
-            "$ref": "#/components/schemas/ErrorEnvelopeError"
-          }
-        },
-        "required": ["error"],
-        "title": "ErrorEnvelope",
-        "type": "object"
-      },
-      "ErrorEnvelopeError": {
-        "properties": {
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Code"
-          },
-          "type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Type"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          },
-          "details": {
-            "title": "Details"
-          }
-        },
-        "required": ["message"],
-        "title": "ErrorEnvelopeError",
-        "type": "object"
-      },
       "WatchRuleUpdate": {
         "example": {
           "is_active": true,
@@ -2236,7 +2374,9 @@
           "query": {
             "max_price": 30,
             "q": "detroit techno",
-            "sources": ["discogs"]
+            "sources": [
+              "discogs"
+            ]
           }
         },
         "properties": {
@@ -2370,10 +2510,22 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication Provider Unavailable"
           }
         },
         "summary": "Web Login",
-        "tags": ["auth"]
+        "tags": [
+          "auth"
+        ]
       }
     },
     "/api/events": {
@@ -2452,7 +2604,9 @@
           }
         ],
         "summary": "List Events",
-        "tags": ["events"]
+        "tags": [
+          "events"
+        ]
       }
     },
     "/api/integrations/discogs/connect": {
@@ -2496,7 +2650,10 @@
           }
         ],
         "summary": "Connect Discogs",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/integrations/discogs/disconnect": {
@@ -2540,7 +2697,10 @@
           }
         ],
         "summary": "Disconnect Discogs",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/integrations/discogs/import": {
@@ -2584,7 +2744,10 @@
           }
         ],
         "summary": "Import Discogs",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/integrations/discogs/import/{job_id}": {
@@ -2630,7 +2793,10 @@
           }
         ],
         "summary": "Get Import Job",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/integrations/discogs/imported-items": {
@@ -2642,7 +2808,10 @@
             "name": "source",
             "required": true,
             "schema": {
-              "enum": ["wantlist", "collection"],
+              "enum": [
+                "wantlist",
+                "collection"
+              ],
               "title": "Source",
               "type": "string"
             }
@@ -2699,7 +2868,10 @@
           }
         ],
         "summary": "List Imported Discogs Items",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/integrations/discogs/imported-items/{watch_release_id}/open-in-discogs": {
@@ -2721,7 +2893,10 @@
             "name": "source",
             "required": true,
             "schema": {
-              "enum": ["wantlist", "collection"],
+              "enum": [
+                "wantlist",
+                "collection"
+              ],
               "title": "Source",
               "type": "string"
             }
@@ -2755,7 +2930,10 @@
           }
         ],
         "summary": "Open Imported Item In Discogs",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/integrations/discogs/oauth/callback": {
@@ -2799,7 +2977,10 @@
           }
         ],
         "summary": "Complete Discogs Oauth",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/integrations/discogs/oauth/start": {
@@ -2843,7 +3024,10 @@
           }
         ],
         "summary": "Start Discogs Oauth",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/integrations/discogs/status": {
@@ -2867,7 +3051,10 @@
           }
         ],
         "summary": "Discogs Status",
-        "tags": ["integrations", "discogs"]
+        "tags": [
+          "integrations",
+          "discogs"
+        ]
       }
     },
     "/api/me": {
@@ -2891,7 +3078,9 @@
           }
         ],
         "summary": "Deactivate Me",
-        "tags": ["profile"]
+        "tags": [
+          "profile"
+        ]
       },
       "get": {
         "operationId": "get_me_api_me_get",
@@ -2913,7 +3102,9 @@
           }
         ],
         "summary": "Get Me",
-        "tags": ["profile"]
+        "tags": [
+          "profile"
+        ]
       },
       "patch": {
         "operationId": "patch_me_api_me_patch",
@@ -2955,7 +3146,9 @@
           }
         ],
         "summary": "Patch Me",
-        "tags": ["profile"]
+        "tags": [
+          "profile"
+        ]
       }
     },
     "/api/me/hard-delete": {
@@ -2979,7 +3172,9 @@
           }
         ],
         "summary": "Hard Delete Me",
-        "tags": ["profile"]
+        "tags": [
+          "profile"
+        ]
       }
     },
     "/api/me/logout": {
@@ -3003,7 +3198,9 @@
           }
         ],
         "summary": "Logout Me",
-        "tags": ["profile"]
+        "tags": [
+          "profile"
+        ]
       }
     },
     "/api/notifications": {
@@ -3082,7 +3279,9 @@
           }
         ],
         "summary": "List Notifications",
-        "tags": ["notifications"]
+        "tags": [
+          "notifications"
+        ]
       }
     },
     "/api/notifications/unread-count": {
@@ -3106,7 +3305,9 @@
           }
         ],
         "summary": "Unread Count",
-        "tags": ["notifications"]
+        "tags": [
+          "notifications"
+        ]
       }
     },
     "/api/notifications/{notification_id}/read": {
@@ -3152,7 +3353,9 @@
           }
         ],
         "summary": "Mark Notification Read",
-        "tags": ["notifications"]
+        "tags": [
+          "notifications"
+        ]
       }
     },
     "/api/outbound/ebay/{listing_id}": {
@@ -3212,7 +3415,9 @@
           }
         ],
         "summary": "Redirect Ebay Outbound",
-        "tags": ["outbound"]
+        "tags": [
+          "outbound"
+        ]
       }
     },
     "/api/provider-requests": {
@@ -3291,7 +3496,9 @@
           }
         ],
         "summary": "List Provider Requests",
-        "tags": ["provider-requests"]
+        "tags": [
+          "provider-requests"
+        ]
       }
     },
     "/api/provider-requests/admin": {
@@ -3473,7 +3680,9 @@
           }
         ],
         "summary": "List Provider Requests Admin",
-        "tags": ["provider-requests"]
+        "tags": [
+          "provider-requests"
+        ]
       }
     },
     "/api/provider-requests/admin/summary": {
@@ -3616,7 +3825,9 @@
           }
         ],
         "summary": "Provider Request Summary Admin",
-        "tags": ["provider-requests"]
+        "tags": [
+          "provider-requests"
+        ]
       }
     },
     "/api/provider-requests/summary": {
@@ -3644,7 +3855,9 @@
           }
         ],
         "summary": "Provider Request Summary",
-        "tags": ["provider-requests"]
+        "tags": [
+          "provider-requests"
+        ]
       }
     },
     "/api/search": {
@@ -3688,7 +3901,9 @@
           }
         ],
         "summary": "Search Listings",
-        "tags": ["search"]
+        "tags": [
+          "search"
+        ]
       }
     },
     "/api/search/save-alert": {
@@ -3732,7 +3947,9 @@
           }
         ],
         "summary": "Save Alert",
-        "tags": ["search"]
+        "tags": [
+          "search"
+        ]
       }
     },
     "/api/stream/events": {
@@ -3754,7 +3971,9 @@
           }
         ],
         "summary": "Stream Events",
-        "tags": ["notifications"]
+        "tags": [
+          "notifications"
+        ]
       }
     },
     "/api/watch-releases": {
@@ -3833,7 +4052,9 @@
           }
         ],
         "summary": "List Watch Releases",
-        "tags": ["watch-releases"]
+        "tags": [
+          "watch-releases"
+        ]
       },
       "post": {
         "operationId": "create_watch_release_api_watch_releases_post",
@@ -3875,7 +4096,9 @@
           }
         ],
         "summary": "Create Watch Release",
-        "tags": ["watch-releases"]
+        "tags": [
+          "watch-releases"
+        ]
       }
     },
     "/api/watch-releases/{watch_release_id}": {
@@ -3921,7 +4144,9 @@
           }
         ],
         "summary": "Disable Watch Release",
-        "tags": ["watch-releases"]
+        "tags": [
+          "watch-releases"
+        ]
       },
       "get": {
         "operationId": "get_watch_release_api_watch_releases__watch_release_id__get",
@@ -3965,7 +4190,9 @@
           }
         ],
         "summary": "Get Watch Release",
-        "tags": ["watch-releases"]
+        "tags": [
+          "watch-releases"
+        ]
       },
       "patch": {
         "operationId": "update_watch_release_api_watch_releases__watch_release_id__patch",
@@ -4019,7 +4246,9 @@
           }
         ],
         "summary": "Update Watch Release",
-        "tags": ["watch-releases"]
+        "tags": [
+          "watch-releases"
+        ]
       }
     },
     "/api/watch-rules": {
@@ -4098,7 +4327,9 @@
           }
         ],
         "summary": "List Rules",
-        "tags": ["watch-rules"]
+        "tags": [
+          "watch-rules"
+        ]
       },
       "post": {
         "operationId": "create_rule_api_watch_rules_post",
@@ -4140,7 +4371,9 @@
           }
         ],
         "summary": "Create Rule",
-        "tags": ["watch-rules"]
+        "tags": [
+          "watch-rules"
+        ]
       }
     },
     "/api/watch-rules/{rule_id}": {
@@ -4186,7 +4419,9 @@
           }
         ],
         "summary": "Disable Rule",
-        "tags": ["watch-rules"]
+        "tags": [
+          "watch-rules"
+        ]
       },
       "get": {
         "operationId": "get_rule_api_watch_rules__rule_id__get",
@@ -4230,7 +4465,9 @@
           }
         ],
         "summary": "Get Rule",
-        "tags": ["watch-rules"]
+        "tags": [
+          "watch-rules"
+        ]
       },
       "patch": {
         "operationId": "patch_rule_api_watch_rules__rule_id__patch",
@@ -4284,7 +4521,9 @@
           }
         ],
         "summary": "Patch Rule",
-        "tags": ["watch-rules"]
+        "tags": [
+          "watch-rules"
+        ]
       }
     },
     "/api/watch-rules/{rule_id}/disable": {
@@ -4330,7 +4569,9 @@
           }
         ],
         "summary": "Disable Rule Explicit",
-        "tags": ["watch-rules"]
+        "tags": [
+          "watch-rules"
+        ]
       }
     },
     "/api/watch-rules/{rule_id}/hard": {
@@ -4369,7 +4610,9 @@
           }
         ],
         "summary": "Delete Rule Hard",
-        "tags": ["watch-rules"]
+        "tags": [
+          "watch-rules"
+        ]
       }
     },
     "/healthz": {
@@ -4386,7 +4629,9 @@
           }
         },
         "summary": "Healthz",
-        "tags": ["health"]
+        "tags": [
+          "health"
+        ]
       }
     },
     "/readyz": {
@@ -4403,7 +4648,9 @@
           }
         },
         "summary": "Readyz",
-        "tags": ["health"]
+        "tags": [
+          "health"
+        ]
       }
     }
   }
