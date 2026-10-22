@@ -1,0 +1,69 @@
+name: Contract Sync
+
+# Fails when the frontend's copies of the backend API contract drift from the backend originals.
+# The frontend copies are byte-identical mirrors (excluded from frontend Prettier):
+#   backend/docs/openapi.snapshot.json      -> frontend/contracts/openapi.snapshot.json
+#                                           -> frontend/reference/openapi.snapshot.json
+#   backend/docs/FRONTEND_API_CONTRACT.md   -> frontend/reference/FRONTEND_API_CONTRACT_BACKEND.md
+# Fix drift by running `make openapi-snapshot` in backend/ and copying the files over verbatim.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "backend/docs/openapi.snapshot.json"
+      - "backend/docs/FRONTEND_API_CONTRACT.md"
+      - "frontend/contracts/openapi.snapshot.json"
+      - "frontend/reference/openapi.snapshot.json"
+      - "frontend/reference/FRONTEND_API_CONTRACT_BACKEND.md"
+      - ".github/workflows/contract-sync.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "backend/docs/openapi.snapshot.json"
+      - "backend/docs/FRONTEND_API_CONTRACT.md"
+      - "frontend/contracts/openapi.snapshot.json"
+      - "frontend/reference/openapi.snapshot.json"
+      - "frontend/reference/FRONTEND_API_CONTRACT_BACKEND.md"
+      - ".github/workflows/contract-sync.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contract-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot-mirrors:
+    name: Frontend contract mirrors match backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Compare frontend mirrors with backend originals
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          check() {
+            local source="$1" mirror="$2"
+            if [[ ! -f "$mirror" ]]; then
+              echo "::error file=${mirror}::missing mirror of ${source}"
+              status=1
+            elif ! cmp -s "$source" "$mirror"; then
+              echo "::error file=${mirror}::${mirror} differs from ${source}. Copy it verbatim: cp ${source} ${mirror}"
+              diff -u "$source" "$mirror" | head -n 200 || true
+              status=1
+            else
+              echo "ok: ${mirror} matches ${source}"
+            fi
+          }
+          check backend/docs/openapi.snapshot.json frontend/contracts/openapi.snapshot.json
+          check backend/docs/openapi.snapshot.json frontend/reference/openapi.snapshot.json
+          check backend/docs/FRONTEND_API_CONTRACT.md frontend/reference/FRONTEND_API_CONTRACT_BACKEND.md
+          exit "$status"
