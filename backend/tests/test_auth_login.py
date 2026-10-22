@@ -415,3 +415,98 @@ def test_deactivate_clears_session_cookie(client, user, sign_jwt):
 
     assert response.status_code == 200
     assert _session_cookie(response)[COOKIE_NAME]["max-age"] == "0"
+
+
+# --- Same-origin behind a TLS-terminating proxy (uvicorn without --proxy-headers) ---
+
+
+def _cookie_logout(client, token: str, extra_headers: dict[str, str]):
+    return client.post("/api/me/logout", headers={"Cookie": f"{COOKIE_NAME}={token}", **extra_headers})
+
+
+@pytest.fixture()
+def _no_cors_origins(monkeypatch):
+    monkeypatch.setattr(settings, "cors_allowed_origins", [])
+
+
+@pytest.mark.usefixtures("_no_cors_origins")
+@pytest.mark.parametrize(
+    "extra_headers",
+    [
+        # (a) proxy sets X-Forwarded-Proto and passes the original Host through
+        {"Origin": "https://app.example", "Host": "app.example", "X-Forwarded-Proto": "https"},
+        # (b) proxy rewrites Host to the upstream; X-Forwarded-Host carries the public host
+        {
+            "Origin": "https://app.example",
+            "Host": "api-upstream:8000",
+            "X-Forwarded-Host": "app.example",
+            "X-Forwarded-Proto": "https",
+        },
+        # multi-hop forwarding lists: first value wins
+        {
+            "Origin": "https://app.example",
+            "Host": "10.0.0.5:8000",
+            "X-Forwarded-Host": "app.example, lb.internal",
+            "X-Forwarded-Proto": "https, http",
+        },
+        # explicit default port in the forwarded host
+        {
+            "Origin": "https://app.example",
+            "Host": "app.example",
+            "X-Forwarded-Host": "app.example:443",
+            "X-Forwarded-Proto": "https",
+        },
+        # proxy forwards Host only (no X-Forwarded-Proto): host-only, scheme-insensitive match
+        {"Origin": "https://app.example", "Host": "app.example"},
+        {"Origin": "https://app.example", "Host": "app.example:80"},
+    ],
+)
+def test_cookie_session_same_origin_behind_tls_proxy_is_allowed(client, user, sign_jwt, extra_headers):
+    response = _cookie_logout(client, sign_jwt(sub=str(user.id)), extra_headers)
+
+    assert response.status_code == 200
+
+
+@pytest.mark.usefixtures("_no_cors_origins")
+@pytest.mark.parametrize(
+    "extra_headers",
+    [
+        # (c) evil origin with forwarded headers
+        {"Origin": "https://evil.example", "Host": "app.example", "X-Forwarded-Proto": "https"},
+        {
+            "Origin": "https://evil.example",
+            "Host": "api-upstream:8000",
+            "X-Forwarded-Host": "app.example",
+            "X-Forwarded-Proto": "https",
+        },
+        {"Origin": "https://evil.example", "Host": "app.example"},
+        # look-alike hosts
+        {"Origin": "https://app.example.evil.example", "Host": "app.example"},
+        {"Origin": "https://evil-app.example", "Host": "app.example", "X-Forwarded-Proto": "https"},
+        # forwarded proto present: scheme must match exactly
+        {"Origin": "http://app.example", "Host": "app.example", "X-Forwarded-Proto": "https"},
+        # different port on the same host is a different origin
+        {"Origin": "https://app.example:8443", "Host": "app.example", "X-Forwarded-Proto": "https"},
+        # malformed / opaque origins
+        {"Origin": "null", "Host": "app.example"},
+        {"Origin": "app.example", "Host": "app.example"},
+    ],
+)
+def test_cookie_session_foreign_origin_behind_proxy_is_rejected(client, user, sign_jwt, extra_headers):
+    response = _cookie_logout(client, sign_jwt(sub=str(user.id)), extra_headers)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "origin_not_allowed"
+
+
+@pytest.mark.usefixtures("_no_cors_origins")
+def test_login_same_origin_behind_tls_proxy_is_allowed(client, user, sign_jwt, provider):
+    provider.respond(200, {"access_token": sign_jwt(sub=str(user.id))})
+
+    response = client.post(
+        LOGIN_URL,
+        json=CREDENTIALS,
+        headers={"Origin": "https://app.example", "Host": "app.example", "X-Forwarded-Proto": "https"},
+    )
+
+    assert response.status_code == 200

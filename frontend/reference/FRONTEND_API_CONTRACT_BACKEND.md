@@ -77,7 +77,7 @@ This contract captures **current API behavior** and maps it to intended React su
   - `POST /api/auth/login`: login/bootstrap endpoint; does **not** require a pre-existing token or cookie.
   - `GET /api/stream/events`: web uses the session cookie (`EventSource` with `withCredentials`); mobile/native uses bearer auth.
   - `/api/me/*`: requires an authenticated user on all platforms (cookie for web, bearer for mobile/native).
-- Cookie-session CSRF guard: cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` requests that send an `Origin` header must come from the API's own origin or an origin listed in `CORS_ALLOWED_ORIGINS`; otherwise `403` with `code: origin_not_allowed`. The cookie is `SameSite=Lax` by default. Bearer-authenticated requests are not subject to this check.
+- Cookie-session CSRF guard: cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` requests that send an `Origin` header must come from the API's own external origin or an origin listed in `CORS_ALLOWED_ORIGINS`; otherwise `403` with `code: origin_not_allowed`. Behind a TLS-terminating proxy the external origin is derived from `X-Forwarded-Host`/`X-Forwarded-Proto` (first values), else the `Host` header with a scheme-insensitive host comparison, so a same-origin `/api` proxy works without listing the web origin (see `docs/DEPLOYMENT.md`). The cookie is `SameSite=Lax` by default. Bearer-authenticated requests are not subject to this check.
 - JWT requirements (same for header and cookie):
   - Verified against configured JWKS.
   - Must contain valid `exp`, `iss`, `aud`, `sub`.
@@ -651,13 +651,14 @@ Frontend guidance:
   - `401` `invalid_credentials`: wrong email/password (Supabase `400`, `invalid_credentials`/`invalid_grant`).
   - `403` `email_not_confirmed`: Supabase account email not confirmed.
   - `403` `account_inactive`: the WaxWatch account was deactivated (`DELETE /api/me`); no cookie is set.
-  - `403` `origin_not_allowed`: request `Origin` is neither the API's own origin nor in `CORS_ALLOWED_ORIGINS`.
+  - `403` `origin_not_allowed`: request `Origin` is neither the API's own external origin (proxy-aware, see section `1`) nor in `CORS_ALLOWED_ORIGINS`.
   - `422` `validation_error`: malformed body (for example invalid email, empty password).
   - `429` `rate_limited`: local `auth_endpoints` budget exhausted, or Supabase throttled the login (its `Retry-After` is forwarded; `error.details.scope = "auth_endpoints"`).
   - `503` `auth_login_unavailable`: login not configured (`SUPABASE_ANON_KEY` or auth base URL missing).
   - `503` `auth_provider_unavailable`: Supabase unreachable/timeout.
   - `503` `auth_provider_error`: Supabase `401`/`403`/`5xx` (misconfigured API key or outage), a malformed success payload, or an issued token that fails JWKS verification.
 - **Frontend mapping:** `401`/`403` or `code=invalid_credentials` → "Invalid email or password."; `422` → envelope `message`; `429` → rate-limited state using `Retry-After`; `503` → generic "Unable to sign in" error state.
+- **Same-origin deployments:** when the web app reaches the API via `/api` behind a TLS-terminating proxy/LB, no extra config is needed provided the proxy preserves the public `Host` or sets `X-Forwarded-Host` (see `docs/DEPLOYMENT.md`); otherwise list the web origin in `CORS_ALLOWED_ORIGINS`.
 - **Cross-origin deployments:** when the web app and API are on different origins, set `CORS_ALLOWED_ORIGINS` to the exact web origin and `CORS_ALLOW_CREDENTIALS=true`; if they are on different *sites*, the cookie also needs `AUTH_SESSION_COOKIE_SAMESITE=none` (requires `Secure`).
 
 ---
