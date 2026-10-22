@@ -37,6 +37,14 @@ TEST_AUTH_JWKS_CACHE_TTL_SECONDS ?= 300
 TEST_AUTH_CLOCK_SKEW_SECONDS ?= 0
 TEST_TOKEN_CRYPTO_LOCAL_KEY ?= 5pq6kEUS_UIk1_4qatN-Lx42s3e362VNq5CgyI4LAZU=
 COVERAGE_FAIL_UNDER ?= 85
+# CI sharding knobs for ci-db-tests (empty = unsharded, the local/ci-local default).
+# PYTEST_SHARD_INDEX is 1-based; tests/conftest.py assigns whole test files to shards deterministically.
+PYTEST_SHARD_INDEX ?=
+PYTEST_SHARD_TOTAL ?=
+# Coverage data file written by ci-db-tests inside the api-test container. CI shards point this at the
+# bind-mounted workspace (/app/coverage-shards/...) so each shard's data can be uploaded and combined.
+CI_COVERAGE_FILE ?= /tmp/.coverage
+COVERAGE_SHARD_DIR ?= coverage-shards
 
 # Git helpers
 GIT_REMOTE ?= origin
@@ -60,7 +68,7 @@ TAG ?= ci
 FIX ?=
 RUFF_ARGS ?=
 
-.PHONY: help up down build logs ps sh test test-profile test-search test-discogs-ingestion test-notifications lint fmt fmt-check migrate revision revision-msg downgrade dbshell dbreset migrate-prod prod-up check-prod-env ci-check-migrations test-with-docker-db test-db-up test-db-down test-db-logs test-db-reset check-docker-config check-policy-sync check-compose-secret-defaults check-smoke-workflow-config check-change-surface check-contract-sync check-openapi-snapshot openapi-snapshot check-coverage-regression ci-static-checks ci-local ci-db-tests gh bootstrap-test-deps verify-test-deps test-watch-rules-hard-delete test-background-tasks test-token-security test-rate-limit worker-up worker-down worker-logs beat-logs test-celery-tasks test-matching test-coverage-uplift typecheck pre-commit-install perf-smoke lock-refresh ci-celery-redis-smoke wait-test-redis check-lock-python-version security-deps-audit security-secrets-scan
+.PHONY: help up down build logs ps sh test test-profile test-search test-discogs-ingestion test-notifications lint fmt fmt-check migrate revision revision-msg downgrade dbshell dbreset migrate-prod prod-up check-prod-env ci-check-migrations test-with-docker-db test-db-up test-db-down test-db-logs test-db-reset check-docker-config check-policy-sync check-compose-secret-defaults check-smoke-workflow-config check-change-surface check-contract-sync check-openapi-snapshot openapi-snapshot check-coverage-regression ci-static-checks ci-local ci-db-tests ci-coverage-combine gh bootstrap-test-deps verify-test-deps test-watch-rules-hard-delete test-background-tasks test-token-security test-rate-limit worker-up worker-down worker-logs beat-logs test-celery-tasks test-matching test-coverage-uplift typecheck pre-commit-install perf-smoke lock-refresh ci-celery-redis-smoke wait-test-redis check-lock-python-version security-deps-audit security-secrets-scan
 
 help:
 	@echo ""
@@ -101,6 +109,9 @@ help:
 	@echo "  make ci-local              Run full CI flow locally"
 	@echo "                             (lint + fmt-check + typecheck + migrate + drift + pytest+coverage)"
 	@echo "                             (coverage gate: --cov-fail-under=$(COVERAGE_FAIL_UNDER))"
+	@echo "  make ci-db-tests PYTEST_SHARD_INDEX=1 PYTEST_SHARD_TOTAL=3 COVERAGE_FAIL_UNDER=0 CI_COVERAGE_FILE=/app/coverage-shards/shard-1.coverage"
+	@echo "                             Run one CI shard of the DB suite (unsharded when the shard vars are empty)"
+	@echo "  make ci-coverage-combine   Combine $(COVERAGE_SHARD_DIR)/*.coverage, enforce COVERAGE_FAIL_UNDER, write coverage.json"
 	@echo "  make test-profile          Run focused profile API tests (local debugging only; non-authoritative)"
 	@echo "  make test-background-tasks Run focused background task transaction test (local debugging only; non-authoritative)"
 	@echo "  make test-discogs-ingestion Run focused Discogs ingestion readiness tests (local debugging only; non-authoritative)"
@@ -591,6 +602,8 @@ wait-test-db:
 # - Worker-dependent integration tests must not rely on implicit worker presence in ci-db-tests.
 # - ci-db-tests intentionally excludes integration-marked tests (-m "not integration") and also ignores
 #   tests/test_celery_redis_integration.py as a belt-and-suspenders guard against worker-dependent leakage.
+# - ci-db-tests honors PYTEST_SHARD_INDEX/PYTEST_SHARD_TOTAL (CI matrix shards); left empty it runs the whole suite.
+#   Sharded CI runs set COVERAGE_FAIL_UNDER=0 per shard and enforce the floor on the merged data via ci-coverage-combine.
 # - ci-celery-redis-smoke readiness is checked by scripts/ci_celery_redis_smoke.sh via worker PID + logs (no inspect ping).
 ci-static-checks:
 	$(MAKE) verify-test-deps; \
@@ -609,7 +622,21 @@ ci-db-tests:
 	$(MAKE) wait-test-db; \
 	$(COMPOSE) -f $(TEST_DB_COMPOSE) run --rm -e DATABASE_URL=$(TEST_DATABASE_URL_DOCKER) -e TOKEN_CRYPTO_LOCAL_KEY=$(TEST_TOKEN_CRYPTO_LOCAL_KEY) $(TEST_APP_SERVICE) "alembic upgrade heads"; \
 	$(COMPOSE) -f $(TEST_DB_COMPOSE) run --rm -e DATABASE_URL=$(TEST_DATABASE_URL_DOCKER) -e TOKEN_CRYPTO_LOCAL_KEY=$(TEST_TOKEN_CRYPTO_LOCAL_KEY) $(TEST_APP_SERVICE) "python -m scripts.schema_drift_check"; \
-	$(COMPOSE) -f $(TEST_DB_COMPOSE) run --rm -e DATABASE_URL=$(TEST_DATABASE_URL_DOCKER) -e TOKEN_CRYPTO_LOCAL_KEY=$(TEST_TOKEN_CRYPTO_LOCAL_KEY) -e COVERAGE_FILE=/tmp/.coverage $(TEST_APP_SERVICE) "pytest -q --disable-warnings --maxfail=1 -m 'not integration' --cov-fail-under=$(COVERAGE_FAIL_UNDER) --ignore=tests/test_celery_redis_integration.py"
+	$(COMPOSE) -f $(TEST_DB_COMPOSE) run --rm -e DATABASE_URL=$(TEST_DATABASE_URL_DOCKER) -e TOKEN_CRYPTO_LOCAL_KEY=$(TEST_TOKEN_CRYPTO_LOCAL_KEY) -e COVERAGE_FILE=$(CI_COVERAGE_FILE) -e PYTEST_SHARD_INDEX=$(PYTEST_SHARD_INDEX) -e PYTEST_SHARD_TOTAL=$(PYTEST_SHARD_TOTAL) $(TEST_APP_SERVICE) "pytest -q --disable-warnings --maxfail=1 -m 'not integration' --cov-fail-under=$(COVERAGE_FAIL_UNDER) --ignore=tests/test_celery_redis_integration.py"
+
+# Combines per-shard coverage data (uploaded by the CI db-tests-shard matrix) on the host, enforces the
+# total coverage floor on the merged result, and writes coverage.json for scripts/check_coverage_regression.py.
+# Paths are portable between the container (/app) and the runner because pyproject.toml sets relative_files.
+ci-coverage-combine:
+	@set -euo pipefail; \
+	shopt -s nullglob; \
+	files=($(COVERAGE_SHARD_DIR)/*.coverage); \
+	if [ "$${#files[@]}" -eq 0 ]; then echo "No coverage shard data found in $(COVERAGE_SHARD_DIR)/"; exit 1; fi; \
+	echo "Combining $${#files[@]} coverage shard file(s): $${files[*]}"; \
+	rm -f .coverage; \
+	$(PYTHON) -m coverage combine --keep --data-file=.coverage "$${files[@]}"; \
+	$(PYTHON) -m coverage report --data-file=.coverage --show-missing --fail-under=$(COVERAGE_FAIL_UNDER); \
+	$(PYTHON) -m coverage json --data-file=.coverage -o coverage.json
 
 # Mirrors the GitHub Actions CI job
 ci-local:

@@ -16,3 +16,6 @@ __pycache__/
 .coverage.*
 coverage.json
 coverage.*.json
+# CI coverage shard data / cached baselines (make ci-db-tests CI_COVERAGE_FILE=... / make ci-coverage-combine)
+coverage-shards/
+coverage-cache/

@@ -31,8 +31,10 @@ Security triage and exception handling process is documented in `docs/OPERATIONS
 GitHub Actions CI is split into two primary jobs to improve required-check granularity and time-to-first-failure:
 
 - `static-checks`: `make ci-static-checks` (Ruff lint/format, mypy, policy/contract checks, and other non-DB gates).
-- `db-tests`: `make ci-db-tests` (test DB migrations + schema drift + pytest coverage), configured to run after `static-checks`.
-- Coverage regression comparison (`scripts/check_coverage_regression.py`) runs after generating base + PR coverage artifacts; if the fetched base revision cannot produce a DB pytest baseline, CI emits a warning and skips only the comparison step while preserving PR coverage gating.
+- `db-tests-shard (i/3)`: a matrix of `make ci-db-tests PYTEST_SHARD_INDEX=i PYTEST_SHARD_TOTAL=3` runs (test DB migrations + schema drift + that shard's slice of pytest), configured to run after `static-checks`. `tests/conftest.py` assigns whole test files to shards deterministically; each shard uploads its coverage data file. Shard 1 also runs the Celery guardrail/provenance checks and shard 3 the targeted `tests/test_rate_limit.py` regression run.
+- `base-coverage` (PR only, parallel): restores or regenerates the base-branch `coverage.json` baseline (cached by the base revision's `backend/` tree hash; push-to-main runs seed that cache).
+- `db-tests` (aggregate, the stable required check): fails unless `static-checks` and every shard passed, then `make ci-coverage-combine` merges the shard data, enforces the 85% floor on the combined result, and writes `coverage.json`.
+- Coverage regression comparison (`scripts/check_coverage_regression.py`) runs in `db-tests` against the `base-coverage` baseline; if the fetched base revision cannot produce a DB pytest baseline, CI emits a warning and skips only the comparison step while preserving PR coverage gating.
 
 `make ci-local` remains the canonical local command and composes both jobs plus `make ci-celery-redis-smoke`.
 
