@@ -1,19 +1,29 @@
 version: 2
 updates:
+  # Minor/patch bumps are grouped into one PR per ecosystem; major bumps still get their own PR.
   - package-ecosystem: "pip"
     directory: "/backend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      backend-minor-patch:
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      frontend-minor-patch:
+        update-types: ["minor", "patch"]
 
   # Keep GitHub Actions updates enabled for pinned action SHA rotation.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
+    groups:
+      github-actions:
+        patterns: ["*"]
