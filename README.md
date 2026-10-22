@@ -55,4 +55,4 @@ Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) covers pip in `b
 
 ## History
 
-This repo combines [kabeier/WatchWaxApi](https://github.com/kabeier/WatchWaxApi) (now `backend/`) and [kabeier/WaxWatch-web](https://github.com/kabeier/WaxWatch-web) (now `frontend/`), with both projects' full `main` history preserved. Use `git log --follow <path>` to trace a file back through the original repos.
+This repo combines [kabeier/WaxWatch-api](https://github.com/kabeier/WaxWatch-api) (now `backend/`) and [kabeier/WaxWatch-web](https://github.com/kabeier/WaxWatch-web) (now `frontend/`), with both projects' full `main` history preserved. Use `git log --follow <path>` to trace a file back through the original repos.
