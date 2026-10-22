@@ -1,10 +1,17 @@
 # WaxWatch Frontend API Contract
 
-**Contract version:** `2026-03-02.4`
+**Contract version:** `2026-10-22.0`
 
 This contract captures **current API behavior** and maps it to intended React surfaces so frontend can scaffold screens directly from OpenAPI payloads.
 
 ## Changelog
+
+- `2026-10-22.0`
+  - Added backend-owned web login: `POST /api/auth/login` (section `4.7`) exchanges email/password with Supabase Auth (password grant) and sets an httpOnly session cookie (`waxwatch_session` by default). The access token is never returned in the response body.
+  - Authenticated endpoints now accept the session cookie when no `Authorization` header is sent (bearer header wins when both are present). Cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` requests carrying an `Origin` header must come from the API's own origin or a `CORS_ALLOWED_ORIGINS` entry, otherwise `403` with `code: origin_not_allowed`.
+  - `POST /api/me/logout`, `DELETE /api/me`, and `DELETE /api/me/hard-delete` now also clear the session cookie (response bodies unchanged).
+  - New error-envelope `code` values: `invalid_credentials`, `email_not_confirmed`, `account_inactive`, `auth_login_unavailable`, `auth_provider_unavailable`, `auth_provider_error`, `origin_not_allowed`. HTTP errors raised with a domain code keep their `status`; other HTTP errors still use `http_error`.
+  - New schemas: `LoginRequest`, `LoginResponse`, `ErrorEnvelope`, `ErrorEnvelopeError`. `frontend/contracts/openapi.snapshot.json` and `frontend/reference/openapi.snapshot.json` are byte-identical copies of `docs/openapi.snapshot.json`, enforced by the repo-root `contract-sync` workflow.
 
 - `2026-03-02.4`
   - Structural cleanup only: reordered section `4.6 Provider Request Observability (User + Admin)` to follow `4.5` and keep all `4.x` endpoint contracts before governance/process sections `5/6/7`.
@@ -62,16 +69,25 @@ This contract captures **current API behavior** and maps it to intended React su
 
 ## 1) Auth + Session Assumptions
 
-- All user-facing endpoints in this document require `Authorization: Bearer <jwt>`.
-- JWT requirements:
+- All user-facing endpoints in this document require an authenticated user, supplied in one of two ways:
+  - **Web (browser):** the httpOnly session cookie set by `POST /api/auth/login` (send requests with `credentials: "include"`). JavaScript never sees the token.
+  - **Mobile/native and other non-browser clients:** `Authorization: Bearer <jwt>` (Supabase access token obtained directly from Supabase Auth).
+  - When both are present the `Authorization` header wins. Missing both yields `401` (`message: "missing bearer token"`).
+- Endpoint-level auth requirements and exceptions:
+  - `POST /api/auth/login`: login/bootstrap endpoint; does **not** require a pre-existing token or cookie.
+  - `GET /api/stream/events`: web uses the session cookie (`EventSource` with `withCredentials`); mobile/native uses bearer auth.
+  - `/api/me/*`: requires an authenticated user on all platforms (cookie for web, bearer for mobile/native).
+- Cookie-session CSRF guard: cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` requests that send an `Origin` header must come from the API's own origin or an origin listed in `CORS_ALLOWED_ORIGINS`; otherwise `403` with `code: origin_not_allowed`. The cookie is `SameSite=Lax` by default. Bearer-authenticated requests are not subject to this check.
+- JWT requirements (same for header and cookie):
   - Verified against configured JWKS.
   - Must contain valid `exp`, `iss`, `aud`, `sub`.
   - `sub` must be a UUID (used as `user_id`).
 - Missing/invalid token yields a standardized `error` envelope.
 - Session lifecycle assumptions for React:
-  - Login/token issuance happens outside this API (Supabase/Auth provider).
-  - `POST /api/me/logout` returns a logout marker payload for client-side/session-provider sign-out orchestration.
-  - `DELETE /api/me` deactivates local account state; frontend should then clear session and route to signed-out state.
+  - Web session issuance is backend-owned via `POST /api/auth/login` (section `4.7`). The cookie lives as long as the Supabase access token (`expires_in`, typically 3600s); there is no refresh endpoint yet, so after expiry protected calls return `401` and the web app should route to sign-in.
+  - Mobile/native token issuance still happens directly against Supabase Auth.
+  - `POST /api/me/logout` returns a logout marker payload for client-side/session-provider sign-out orchestration and clears the session cookie.
+  - `DELETE /api/me` deactivates local account state and clears the session cookie; frontend should then clear session and route to signed-out state.
   - `DELETE /api/me/hard-delete` immediately and permanently deletes the authenticated user record when it exists.
 
 ---
@@ -122,6 +138,7 @@ All framework/HTTP and validation failures are returned as:
   - `validation_error`
   - `http_error`
   - `rate_limited`
+  - auth/session codes: `invalid_credentials`, `email_not_confirmed`, `account_inactive`, `auth_login_unavailable`, `auth_provider_unavailable`, `auth_provider_error`, `origin_not_allowed` (see sections `1` and `4.7`)
 - Domain not-found and business-rule failures are emitted through `http_error` with useful `message` text.
 
 ### 3.2 Pagination conventions
@@ -513,6 +530,7 @@ The API has two watch paradigms; frontend can present both under a single “Ale
 ### `GET /api/stream/events` (SSE)
 - **Screen:** app shell/event bridge.
 - **Action:** Subscribe once per authenticated session; fan out to inbox/badge stores.
+- **Auth:** web clients rely on the session cookie (`EventSource(url, { withCredentials: true })`) and should not depend on JS-managed bearer tokens; mobile/native adapters may attach a bearer token instead.
 - **SSE event name:** `notification`
 - **SSE payload shape:**
 
@@ -598,6 +616,52 @@ Frontend guidance:
 
 ---
 
+## 4.7 Web Login (Session Cookie)
+
+### `POST /api/auth/login`
+
+- **Screen:** `LoginPageClient` form submit (`frontend/app/(auth)/login/LoginPageClient.tsx`), sent with `credentials: "include"`.
+- **Auth:** none required. Protected by the `auth_endpoints` rate-limit scope (`RATE_LIMIT_AUTH_ENDPOINT_RPM` / `_BURST`, keyed per client IP; rotating bogus cookies/bearers share one `anon:<client>:bearer` budget).
+- **Request body (`LoginRequest`):**
+
+```json
+{
+  "email": "listener@example.com",
+  "password": "<redacted>",
+  "return_to": "/",
+  "handoff": "waxwatch://auth/callback",
+  "state": "state-123",
+  "nonce": "nonce-123",
+  "expires_at": "2026-01-02T00:00:01.000Z"
+}
+```
+
+  - `email` (valid email) and `password` (non-empty) are required.
+  - `return_to`, `handoff`, `state`, `nonce`, `expires_at` are optional strings accepted for the web/mobile handoff flow. The backend does **not** mint handoff tokens or validate `state`/`nonce`/`expires_at`; the web client enforces handoff expiry/parameter checks before and after submit.
+- **Backend behavior:** calls Supabase Auth `POST <SUPABASE_URL>/auth/v1/token?grant_type=password` (falls back to `<AUTH_ISSUER>/token` when `SUPABASE_URL` is unset) with the public `SUPABASE_ANON_KEY`, verifies the returned access token with the same JWKS verifier used for bearer auth, then sets the session cookie.
+- **Success (`200`, `LoginResponse`):**
+
+```json
+{ "success": true, "redirect_to": "/" }
+```
+
+  - `redirect_to` echoes `return_to` only when it is a same-origin relative path (starts with `/`, not `//`, no backslashes); otherwise `/`.
+  - `Set-Cookie: waxwatch_session=<access token>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=<expires_in>` (name/Secure/SameSite/Domain configurable via `AUTH_SESSION_COOKIE_*`). The token is never included in the JSON body.
+- **Errors (all use the section `3.1` envelope):**
+  - `401` `invalid_credentials`: wrong email/password (Supabase `400`, `invalid_credentials`/`invalid_grant`).
+  - `403` `email_not_confirmed`: Supabase account email not confirmed.
+  - `403` `account_inactive`: the WaxWatch account was deactivated (`DELETE /api/me`); no cookie is set.
+  - `403` `origin_not_allowed`: request `Origin` is neither the API's own origin nor in `CORS_ALLOWED_ORIGINS`.
+  - `422` `validation_error`: malformed body (for example invalid email, empty password).
+  - `429` `rate_limited`: local `auth_endpoints` budget exhausted, or Supabase throttled the login (its `Retry-After` is forwarded; `error.details.scope = "auth_endpoints"`).
+  - `503` `auth_login_unavailable`: login not configured (`SUPABASE_ANON_KEY` or auth base URL missing).
+  - `503` `auth_provider_unavailable`: Supabase unreachable/timeout.
+  - `503` `auth_provider_error`: Supabase `401`/`403`/`5xx` (misconfigured API key or outage), a malformed success payload, or an issued token that fails JWKS verification.
+- **Frontend mapping:** `401`/`403` or `code=invalid_credentials` → "Invalid email or password."; `422` → envelope `message`; `429` → rate-limited state using `Retry-After`; `503` → generic "Unable to sign in" error state.
+- **Cross-origin deployments:** when the web app and API are on different origins, set `CORS_ALLOWED_ORIGINS` to the exact web origin and `CORS_ALLOW_CREDENTIALS=true`; if they are on different *sites*, the cookie also needs `AUTH_SESSION_COOKIE_SAMESITE=none` (requires `Secure`).
+
+---
+
 ## 5) OpenAPI Example Alignment (frontend scaffolding guidance)
 
 The OpenAPI schema now includes representative examples for:
@@ -653,6 +717,7 @@ Enforcement:
 - The check fails when API-facing files changed but `docs/FRONTEND_API_CONTRACT.md` was not updated in the same diff.
 - Local equivalents: `make check-contract-sync` and `make check-openapi-snapshot` (or full `make ci-local`).
 - Snapshot gate: CI runs `python -m scripts.openapi_snapshot --check` and compares `app/main.py` generated schema output to the committed `docs/openapi.snapshot.json` baseline. Update the baseline with `make openapi-snapshot` whenever intentional API schema changes are introduced.
+- Frontend mirror gate: the repo-root `.github/workflows/contract-sync.yml` fails when `frontend/contracts/openapi.snapshot.json` or `frontend/reference/openapi.snapshot.json` differ from `backend/docs/openapi.snapshot.json`, or when `frontend/reference/FRONTEND_API_CONTRACT_BACKEND.md` differs from this file. After `make openapi-snapshot` (or any edit to this file), copy the files verbatim into those frontend paths in the same PR (they are excluded from frontend Prettier so the bytes stay identical). If auth-mode assumptions change, also update the frontend-owned `frontend/docs/FRONTEND_API_CONTRACT.md`.
 
 ---
 

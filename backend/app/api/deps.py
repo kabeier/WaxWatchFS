@@ -9,6 +9,8 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.api.errors import CodedHTTPException
+from app.api.session_cookie import cookie_request_origin_allowed, read_session_cookie
 from app.core.auth import build_verifier
 from app.core.logging import get_logger
 from app.core.rate_limit import ScopeName, enforce_rate_limit
@@ -45,7 +47,9 @@ def _resolve_current_user(
     *,
     require_active: bool,
 ) -> UUID:
-    if credentials is None:
+    # Bearer header wins; the web session cookie (set by POST /api/auth/login) is the fallback.
+    token = credentials.credentials if credentials is not None else read_session_cookie(request)
+    if token is None:
         logger.info(
             "auth.missing_bearer",
             extra={
@@ -56,7 +60,23 @@ def _resolve_current_user(
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
 
-    verified = _get_auth_verifier().verify(credentials.credentials)
+    if credentials is None and not cookie_request_origin_allowed(request):
+        logger.warning(
+            "auth.session_cookie.origin_denied",
+            extra={
+                "request_id": getattr(request.state, "request_id", "-"),
+                "path": str(request.url.path),
+                "method": request.method,
+                "origin": request.headers.get("origin"),
+            },
+        )
+        raise CodedHTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="origin_not_allowed",
+            message="cross-origin request not allowed for cookie session",
+        )
+
+    verified = _get_auth_verifier().verify(token)
 
     user = db.query(models.User).filter(models.User.id == verified.user_id).first()
     if require_active and user is not None and not user.is_active:

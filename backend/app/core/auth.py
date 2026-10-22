@@ -167,3 +167,156 @@ def build_verifier() -> SupabaseJWTVerifier:
         jwks_cache_ttl_seconds=settings.auth_jwks_cache_ttl_seconds,
         clock_skew_seconds=settings.auth_clock_skew_seconds,
     )
+
+
+@dataclass(frozen=True)
+class PasswordGrantSession:
+    access_token: str
+    expires_in: int
+
+
+class PasswordGrantError(Exception):
+    """Login failure mapped to an API status + stable error code."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        code: str,
+        message: str,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.retry_after_seconds = retry_after_seconds
+
+
+DEFAULT_SESSION_TTL_SECONDS = 3600
+_INVALID_CREDENTIAL_ERROR_CODES = {"invalid_credentials", "invalid_grant"}
+_UNCONFIRMED_ERROR_CODES = {"email_not_confirmed"}
+
+
+def resolve_auth_api_base_url() -> str | None:
+    """Base URL of the Supabase Auth (GoTrue) API, e.g. `https://<ref>.supabase.co/auth/v1`."""
+    if settings.supabase_url:
+        return f"{settings.supabase_url.rstrip('/')}/auth/v1"
+    if settings.auth_issuer:
+        return settings.auth_issuer.rstrip("/")
+    return None
+
+
+def _provider_error_code(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("error_code", "error"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    return None
+
+
+def _parse_retry_after(value: str | None) -> int:
+    try:
+        parsed = int(value) if value is not None else 60
+    except ValueError:
+        parsed = 60
+    return max(parsed, 1)
+
+
+def exchange_password_for_session(*, email: str, password: str) -> PasswordGrantSession:
+    """Exchange email/password for a Supabase access token via the password grant.
+
+    Never logs the password or token material.
+    """
+    base_url = resolve_auth_api_base_url()
+    anon_key = settings.supabase_anon_key
+    if not base_url or not anon_key:
+        logger.error(
+            "auth.login.not_configured",
+            extra={"auth_api_configured": bool(base_url), "anon_key_configured": bool(anon_key)},
+        )
+        raise PasswordGrantError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="auth_login_unavailable",
+            message="login is not configured",
+        )
+
+    try:
+        response = httpx.post(
+            f"{base_url}/token",
+            params={"grant_type": "password"},
+            json={"email": email, "password": password},
+            headers={"apikey": anon_key, "Accept": "application/json"},
+            timeout=settings.auth_login_timeout_seconds,
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("auth.login.provider_transport_error", extra={"error": exc.__class__.__name__})
+        raise PasswordGrantError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="auth_provider_unavailable",
+            message="authentication provider unavailable",
+        ) from exc
+
+    try:
+        payload: Any = response.json()
+    except ValueError:
+        payload = None
+
+    if response.status_code == status.HTTP_200_OK:
+        access_token = payload.get("access_token") if isinstance(payload, dict) else None
+        if not isinstance(access_token, str) or not access_token:
+            logger.error("auth.login.provider_missing_access_token")
+            raise PasswordGrantError(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="auth_provider_error",
+                message="authentication provider returned an invalid response",
+            )
+        raw_expires_in = payload.get("expires_in")
+        expires_in = (
+            raw_expires_in
+            if isinstance(raw_expires_in, int) and not isinstance(raw_expires_in, bool) and raw_expires_in > 0
+            else DEFAULT_SESSION_TTL_SECONDS
+        )
+        return PasswordGrantSession(access_token=access_token, expires_in=expires_in)
+
+    provider_code = _provider_error_code(payload)
+    log_extra = {"provider_status": response.status_code, "provider_error_code": provider_code}
+
+    if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        logger.warning("auth.login.provider_rate_limited", extra=log_extra)
+        raise PasswordGrantError(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            code="rate_limited",
+            message="rate limit exceeded",
+            retry_after_seconds=_parse_retry_after(response.headers.get("retry-after")),
+        )
+
+    if provider_code in _UNCONFIRMED_ERROR_CODES:
+        logger.info("auth.login.email_not_confirmed", extra=log_extra)
+        raise PasswordGrantError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="email_not_confirmed",
+            message="email address not confirmed",
+        )
+
+    if (
+        response.status_code == status.HTTP_400_BAD_REQUEST
+        or provider_code in _INVALID_CREDENTIAL_ERROR_CODES
+    ):
+        logger.info("auth.login.invalid_credentials", extra=log_extra)
+        raise PasswordGrantError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="invalid_credentials",
+            message="invalid email or password",
+        )
+
+    # A provider 401/403 here means our API key/config is wrong and 5xx is an outage:
+    # report a provider failure instead of blaming the user's credentials.
+    logger.error("auth.login.provider_error", extra=log_extra)
+    raise PasswordGrantError(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="auth_provider_error",
+        message="authentication provider error",
+    )

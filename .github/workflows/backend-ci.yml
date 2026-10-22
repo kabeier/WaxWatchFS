@@ -1,5 +1,6 @@
 name: Backend CI
 
+# Governance note: web login (POST /api/auth/login, session cookie auth) settings/tests are policy-synced; frontend snapshot mirrors are checked by contract-sync.yml.
 # Governance note: rate-limit scoped auth-required pre-auth keying uses shared anon/hybrid principals to avoid bearer spray budget sharding.
 
 # Governance note: notification delivery dispatch is post-commit; task orchestration changes require synced governance/docs/changelog updates.

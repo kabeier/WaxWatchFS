@@ -80,10 +80,12 @@ def _client_identifier(request: Request) -> str:
 
 def _token_fingerprint(request: Request) -> str | None:
     auth_header = request.headers.get("authorization", "")
-    if not auth_header.lower().startswith("bearer "):
-        return None
-
-    token = auth_header[7:].strip()
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+    else:
+        # Web clients authenticate with the httpOnly session cookie instead of a bearer header;
+        # treat it as a credential so cookie sessions get the authenticated budgets/keying.
+        token = (request.cookies.get(settings.auth_session_cookie_name) or "").strip()
     if not token:
         return None
 

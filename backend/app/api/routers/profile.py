@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id, get_current_user_id_allow_inactive, get_db
+from app.api.session_cookie import clear_session_cookie
 from app.core.logging import get_logger
 from app.schemas.users import (
     DeactivateAccountResponse,
@@ -63,10 +64,12 @@ def patch_me(
 @router.post("/logout", response_model=LogoutResponse)
 def logout_me(
     request: Request,
+    response: Response,
     user_id: UUID = Depends(get_current_user_id),
 ):
     request_id = getattr(request.state, "request_id", "-")
     logger.info("profile.logout.call", extra={"request_id": request_id, "user_id": str(user_id)})
+    clear_session_cookie(response)
     marker = users_service.build_logout_marker(user_id=user_id)
     return LogoutResponse(marker=marker)
 
@@ -74,22 +77,26 @@ def logout_me(
 @router.delete("", response_model=DeactivateAccountResponse)
 def deactivate_me(
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
 ):
     request_id = getattr(request.state, "request_id", "-")
     logger.info("profile.deactivate.call", extra={"request_id": request_id, "user_id": str(user_id)})
     deactivated_at = users_service.deactivate_user_account(db, user_id=user_id)
+    clear_session_cookie(response)
     return DeactivateAccountResponse(deactivated_at=deactivated_at)
 
 
 @router.delete("/hard-delete", response_model=HardDeleteAccountResponse)
 def hard_delete_me(
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id_allow_inactive),
 ):
     request_id = getattr(request.state, "request_id", "-")
     logger.info("profile.hard_delete.call", extra={"request_id": request_id, "user_id": str(user_id)})
     deleted_at = users_service.hard_delete_user_account(db, user_id=user_id)
+    clear_session_cookie(response)
     return HardDeleteAccountResponse(deleted_at=deleted_at)
