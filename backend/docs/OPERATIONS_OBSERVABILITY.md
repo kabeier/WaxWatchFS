@@ -185,8 +185,8 @@ Run the lightweight k6 harness at `scripts/perf/core_flows_smoke.js` to continuo
 
 Use `make perf-smoke` for local or staging execution. The command supports either a local `k6` binary or a Docker fallback image and expects `PERF_BASE_URL`, `PERF_BEARER_TOKEN`, and (unless disabled) `PERF_RULE_ID`.
 
-A dedicated GitHub Actions workflow (`.github/workflows/smoke.yml`) runs this suite on demand and on a weekly schedule using environment-scoped configuration (`PERF_BASE_URL` variable, `PERF_BEARER_TOKEN` secret, optional `PERF_RULE_ID` variable). This workflow is intentionally separate from pull-request CI so flaky remote staging dependencies cannot block merges.
-For deploy-blocking verification, run `.github/workflows/release-gates.yml`, which requires scheduler/queue lag inputs and fails the release gate if any latency/error/lag threshold is breached.
+A dedicated GitHub Actions workflow (`.github/workflows/backend-smoke.yml`) runs this suite on demand and on a weekly schedule using environment-scoped configuration (`PERF_BASE_URL` variable, `PERF_BEARER_TOKEN` secret, optional `PERF_RULE_ID` variable). This workflow is intentionally separate from pull-request CI so flaky remote staging dependencies cannot block merges.
+For deploy-blocking verification, run `.github/workflows/backend-release-gates.yml`, which requires scheduler/queue lag inputs and fails the release gate if any latency/error/lag threshold is breached.
 
 GitHub configuration checklist for the `perf-smoke` environment:
 
@@ -195,7 +195,7 @@ GitHub configuration checklist for the `perf-smoke` environment:
 3. Add environment variable `PERF_BASE_URL` with the deployed API base URL (for example, staging).
 4. Optionally add environment variable `PERF_RULE_ID` when you want to exercise the rule-run smoke path.
 5. (Recommended fallback) add repository variables `PERF_BASE_URL` and optional `PERF_RULE_ID`.
-6. Trigger `.github/workflows/smoke.yml` via **Run workflow**; optionally set `perf_base_url` and/or `perf_rule_id` input overrides.
+6. Trigger `.github/workflows/backend-smoke.yml` via **Run workflow**; optionally set `perf_base_url` and/or `perf_rule_id` input overrides.
 7. Runtime resolution order is: `workflow_dispatch` input → `perf-smoke` environment variable → repository variable.
 8. Verify artifacts include:
    - `artifacts/perf/perf-smoke.log`

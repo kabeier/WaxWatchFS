@@ -1,4 +1,4 @@
-name: Performance Smoke
+name: Backend Performance Smoke
 
 on:
   workflow_dispatch:
@@ -18,6 +18,10 @@ on:
 permissions:
   actions: read
   contents: read
+
+defaults:
+  run:
+    working-directory: backend
 
 concurrency:
   group: perf-smoke-${{ github.ref }}
@@ -148,5 +152,5 @@ jobs:
           name: perf-smoke-${{ github.run_id }}
           retention-days: 30
           path: |
-            artifacts/perf/perf-smoke.log
-            artifacts/perf/k6-summary.json
+            backend/artifacts/perf/perf-smoke.log
+            backend/artifacts/perf/k6-summary.json

@@ -1,19 +1,22 @@
-name: Dependency Audit
+name: Backend Dependency Audit
 
 on:
   pull_request:
     branches: ["main"]
     paths:
-      - "requirements*.txt"
-      - "requirements*.in"
-      - "**/requirements*.txt"
-      - "**/requirements*.in"
+      - "backend/**/requirements*.txt"
+      - "backend/**/requirements*.in"
+      - ".github/workflows/backend-dependency-audit.yml"
   schedule:
     - cron: "0 4 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    working-directory: backend
 
 jobs:
   pip-audit:

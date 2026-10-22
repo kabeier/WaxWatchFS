@@ -20,8 +20,8 @@ Avoid custom aliases where possible. If you must use a non-standard value, treat
 
 Security checks are intentionally separated from the main CI job graph to keep permissions minimal and scopes explicit:
 
-- `.github/workflows/security.yml`: CodeQL (Python) on pull requests and a weekly schedule.
-- `.github/workflows/dependency-audit.yml`: `pip-audit` on dependency-file PR changes and weekly schedule.
+- `.github/workflows/backend-security.yml`: CodeQL (Python) on pull requests and a weekly schedule.
+- `.github/workflows/backend-dependency-audit.yml`: `pip-audit` on dependency-file PR changes and weekly schedule.
 - `.github/workflows/secrets-scan.yml`: Gitleaks secret scanning on pull requests and every direct push to `main` (no push path allowlist).
 
 Security triage and exception handling process is documented in `docs/OPERATIONS_OBSERVABILITY.md` and should be followed for any failing security scan.
@@ -148,14 +148,14 @@ Required environment for `make perf-smoke`:
 
 The harness enforces SLO-aligned thresholds for read/query/write-like flows and should be treated as a deploy-blocking check when thresholds are exceeded. Record each release-candidate baseline in `docs/OPERATIONS_OBSERVABILITY.md` (baseline snapshot table) so results stay repeatable across releases.
 
-For release sign-off in GitHub Actions, run `.github/workflows/release-gates.yml` with observed scheduler/queue lag values from dashboards. The workflow is deploy-blocking and fails unless all release thresholds pass:
+For release sign-off in GitHub Actions, run `.github/workflows/backend-release-gates.yml` with observed scheduler/queue lag values from dashboards. The workflow is deploy-blocking and fails unless all release thresholds pass:
 - k6 smoke thresholds from `scripts/perf/core_flows_smoke.js` (read/query/write latency + error rate),
 - `scheduler_lag_p95_seconds < 60`,
 - `scheduler_lag_max_seconds < 180`,
 - `queue_lag_p95_seconds < 30`,
 - `queue_lag_p99_seconds < 90`.
 
-For GitHub Actions runs (`.github/workflows/smoke.yml`), `PERF_BASE_URL` and `PERF_RULE_ID` resolve in this order:
+For GitHub Actions runs (`.github/workflows/backend-smoke.yml`), `PERF_BASE_URL` and `PERF_RULE_ID` resolve in this order:
 1. `workflow_dispatch` input override (`perf_base_url`, `perf_rule_id`),
 2. `perf-smoke` environment variable,
 3. repository variable fallback.
@@ -251,7 +251,7 @@ Operational behavior:
 
 ## Change synchronization requirement
 
-When introducing new environment variables, CI/test commands, or Make targets, update `Makefile`, `.github/workflows/ci.yml`, `CONTRIBUTING.md`, and `CHANGELOG.md` (for behavior-impacting changes) in the same PR, plus any affected docs. Update `.env.sample` only when env vars are added/removed or defaults change.
+When introducing new environment variables, CI/test commands, or Make targets, update `Makefile`, `.github/workflows/backend-ci.yml`, `CONTRIBUTING.md`, and `CHANGELOG.md` (for behavior-impacting changes) in the same PR, plus any affected docs. Update `.env.sample` only when env vars are added/removed or defaults change.
 CI enforces this through `python scripts/check_change_surface.py` and `python scripts/check_env_sample.py` in the workflow.
 
 Discogs import concurrency hardening (for example in-flight uniqueness/cooldown behavior updates spanning service logic, migrations, and tests) also falls under this synchronization policy and must ship with those governance updates in the same PR.

@@ -9,6 +9,7 @@ with release dates in ISO format (`YYYY-MM-DD`).
 ## [Unreleased]
 
 ### Changed
+- Moved backend CI into the WaxWatchFS monorepo layout: workflows now live at the repo root as `.github/workflows/backend-*.yml` (plus repo-wide `secrets-scan.yml`), run with `working-directory: backend`, and are path-filtered to `backend/**`. The shared `setup-python-env` composite action, `dependabot.yml`, PR template, and `.gitleaks.toml` moved to the repo root. Policy-sync scripts (`check_change_surface.py`, `check_env_sample.py`, `check_frontend_contract_sync.py`) and `make check-smoke-workflow-config` now resolve git diff paths relative to `backend/`, so root workflow files appear as `../.github/workflows/backend-*.yml`.
 - Prevented duplicate watch-release `NEW_MATCH` events under concurrent ingest by adding a partial unique `events` index and switching release-match event creation to insert-first `ON CONFLICT DO NOTHING`, with concurrency regression coverage to ensure notifications enqueue only for newly inserted events.
 - Hardened Discogs import job creation under concurrent requests by enforcing partial unique in-flight job constraints and insert-first idempotent `ensure_import_job` behavior, while preserving cooldown reuse semantics and adding parallel-session regression coverage.
 - Updated scheduler due-rule selection to claim rows atomically via `FOR UPDATE` with dialect-gated `SKIP LOCKED` support (fallback to plain `FOR UPDATE` on unsupported backends), preventing duplicate claims across concurrent scheduler sessions.

@@ -1,9 +1,19 @@
-name: CI
+name: Frontend CI
 
 on:
   push:
     branches: ["main"]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
   pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+
+defaults:
+  run:
+    working-directory: frontend
 
 jobs:
   build-and-test:
@@ -32,8 +42,9 @@ jobs:
       - name: Use Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: ".nvmrc"
+          node-version-file: "frontend/.nvmrc"
           cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
 
       - name: Install dependencies
         run: npm ci --include=dev
@@ -60,9 +71,9 @@ jobs:
         with:
           filters: |
             api_or_routes:
-              - 'src/lib/api/**'
-              - 'src/lib/query/**'
-              - 'app/(app)/**'
+              - 'frontend/src/lib/api/**'
+              - 'frontend/src/lib/query/**'
+              - 'frontend/app/(app)/**'
 
       - name: API shape fixtures gate (PR touched API/route pages)
         if: github.event_name == 'pull_request' && steps.api_shape_paths.outputs.api_or_routes == 'true'
@@ -75,9 +86,9 @@ jobs:
         with:
           filters: |
             sse_related:
-              - 'src/components/SseController.tsx'
-              - 'src/components/SseController.test.tsx'
-              - 'docs/SSE_MODEL.md'
+              - 'frontend/src/components/SseController.tsx'
+              - 'frontend/src/components/SseController.test.tsx'
+              - 'frontend/docs/SSE_MODEL.md'
 
       - name: SSE regression gate (PR touched SSE files)
         if: github.event_name == 'pull_request' && steps.sse_paths.outputs.sse_related == 'true'

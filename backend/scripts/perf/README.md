@@ -52,7 +52,7 @@ These thresholds mirror the read/query/write latency and availability guardrails
 
 ## GitHub Actions smoke workflow
 
-A dedicated workflow at `.github/workflows/smoke.yml` runs `make perf-smoke` outside core PR CI so remote-environment flakiness does not block merges.
+A dedicated workflow at `.github/workflows/backend-smoke.yml` runs `make perf-smoke` outside core PR CI so remote-environment flakiness does not block merges.
 
 ### 1) One-time GitHub setup
 
@@ -117,4 +117,4 @@ QUEUE_LAG_P99_SECONDS=20 \
 python scripts/perf/verify_release_gates.py
 ```
 
-This script is used by `.github/workflows/release-gates.yml` and fails the release gate when any threshold is breached.
+This script is used by `.github/workflows/backend-release-gates.yml` and fails the release gate when any threshold is breached.

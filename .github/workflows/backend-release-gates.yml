@@ -1,4 +1,4 @@
-name: Release Gates
+name: Backend Release Gates
 
 on:
   workflow_dispatch:
@@ -31,6 +31,10 @@ on:
 permissions:
   actions: read
   contents: read
+
+defaults:
+  run:
+    working-directory: backend
 
 jobs:
   release-gates:
@@ -75,5 +79,5 @@ jobs:
           name: release-gates-${{ github.run_id }}
           retention-days: 30
           path: |
-            artifacts/perf/perf-smoke.log
-            artifacts/perf/k6-summary.json
+            backend/artifacts/perf/perf-smoke.log
+            backend/artifacts/perf/k6-summary.json

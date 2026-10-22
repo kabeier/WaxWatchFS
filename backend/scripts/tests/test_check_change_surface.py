@@ -32,7 +32,7 @@ def test_main_enforces_governance_for_app_tasks_py(monkeypatch, capsys):
     assert "Triggered categories:" in output
     assert " - task orchestration" in output
     assert " - missing required file update: Makefile" in output
-    assert " - missing required file update: .github/workflows/ci.yml" in output
+    assert " - missing required file update: ../.github/workflows/backend-ci.yml" in output
     assert "Integration hygiene violation: missing CHANGELOG.md update" in output
 
 
@@ -54,7 +54,7 @@ def test_remediation_message_is_derived_from_required_files():
 
     assert (
         module.remediation_message(require_env_sample=False)
-        == "Remediation: update .github/workflows/ci.yml, Makefile, CHANGELOG.md, and relevant documentation in the same PR."
+        == "Remediation: update ../.github/workflows/backend-ci.yml, Makefile, CHANGELOG.md, and relevant documentation in the same PR."
         " (update `.env.sample` only for env var additions/removals/default changes)"
     )
 

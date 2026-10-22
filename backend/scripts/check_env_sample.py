@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parent.parent
 ENV_SAMPLE = ROOT / ".env.sample"
 CONFIG_PY = ROOT / "app/core/config.py"
 MAKEFILE = ROOT / "Makefile"
-CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
+CI_WORKFLOW_PATH = "../.github/workflows/backend-ci.yml"
+CI_WORKFLOW = ROOT / CI_WORKFLOW_PATH
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
 POLICY_DOCS = {
     "docs/DEPLOYMENT.md",
@@ -20,7 +21,7 @@ POLICY_DOCS = {
 REQUIRED_SYNC_FILES = {
     ".env.sample",
     "Makefile",
-    ".github/workflows/ci.yml",
+    CI_WORKFLOW_PATH,
     "CONTRIBUTING.md",
 }
 TARGET_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+):")
@@ -37,6 +38,15 @@ def git(*args: str, check: bool = True) -> str:
     if check and completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or f"git {' '.join(args)} failed")
     return completed.stdout.strip()
+
+
+def to_project_path(repo_path: str) -> str:
+    """Map a repo-root-relative git path to a path relative to this project (backend/).
+
+    Files outside backend/ (for example the monorepo's root .github/) come back as ../<path>.
+    """
+    repo_root = Path(git("rev-parse", "--show-toplevel"))
+    return Path(os.path.relpath(repo_root / repo_path, ROOT)).as_posix()
 
 
 def git_ref_exists(ref: str) -> bool:
@@ -137,7 +147,8 @@ def read_from_base(base_ref: str, path: str) -> str:
     if not base_ref:
         return ""
     result = subprocess.run(
-        ["git", "show", f"{base_ref}:{path}"],
+        # "./" makes git resolve the path relative to ROOT (backend/) rather than the repo root.
+        ["git", "show", f"{base_ref}:./{path}"],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -153,7 +164,7 @@ def changed_files(base_ref: str) -> set[str]:
         return set()
     merge_base = git("merge-base", base_ref, "HEAD")
     names = git("diff", "--name-only", merge_base, check=False)
-    return {line.strip() for line in names.splitlines() if line.strip()}
+    return {to_project_path(line.strip()) for line in names.splitlines() if line.strip()}
 
 
 def main() -> int:
@@ -179,7 +190,7 @@ def main() -> int:
     if base_ref and diff_files:
         base_config = read_from_base(base_ref, "app/core/config.py")
         base_makefile = read_from_base(base_ref, "Makefile")
-        base_ci = read_from_base(base_ref, ".github/workflows/ci.yml")
+        base_ci = read_from_base(base_ref, CI_WORKFLOW_PATH)
 
         base_settings = parse_settings_fields(base_config) if base_config else set()
         base_targets = parse_make_targets(base_makefile) if base_makefile else set()

@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 # Governance note: notification enqueue semantics are post-commit; keep CI/docs/CHANGELOG synchronized when task orchestration changes (and update .env.sample only for env var additions/removals/default changes).
 # Policy: run `make ci-static-checks` (static/policy CI parity) before commit/PR/review handoff.
-# Security scan policy: `.github/workflows/secrets-scan.yml` must run on every push to `main` (without push path filters).
+# Security scan policy: `.github/workflows/secrets-scan.yml` (repo root) must run on every push to `main` (without push path filters).
 # Readiness governance note: DB probe compatibility changes (dialect fallback and missing begin()/in_transaction() guards) must be mirrored in CI/docs/CHANGELOG sync updates (plus .env.sample only when env vars/defaults change).
 # Readiness test-governance note: `/readyz` DB probe regression test-path changes must keep policy-sync artifacts updated together.
 # Readiness timeout governance note: backend-agnostic DB probe timeout wrapper changes must be mirrored in Makefile/CI/docs/CHANGELOG updates.
@@ -121,7 +121,7 @@ help:
 	@echo "  make openapi-snapshot      Regenerate docs/openapi.snapshot.json from app/main.py"
 	@echo "  make ci-check-migrations   Fail if schema drift detected"
 	@echo "  make perf-smoke            Run k6 core-flow perf smoke harness (local/staging/GHA smoke workflow)"
-	@echo "                             Release gate workflow: .github/workflows/release-gates.yml"
+	@echo "                             Release gate workflow: .github/workflows/backend-release-gates.yml"
 	@echo "  make security-deps-audit   Run local pip-audit against requirements*.in/txt"
 	@echo "  make security-secrets-scan Run local gitleaks repository scan (if installed)"
 	@echo ""
@@ -517,12 +517,12 @@ check-policy-sync:
 
 check-smoke-workflow-config:
 	@set -euo pipefail; \
-	test -f .github/workflows/smoke.yml; \
-	grep -q "perf_base_url:" .github/workflows/smoke.yml; \
-	grep -q "perf_rule_id:" .github/workflows/smoke.yml; \
-	grep -q "PERF_BASE_URL source:" .github/workflows/smoke.yml; \
-	grep -q "scheduler_lag_p95_seconds:" .github/workflows/release-gates.yml; \
-	grep -q "queue_lag_p99_seconds:" .github/workflows/release-gates.yml; \
+	test -f ../.github/workflows/backend-smoke.yml; \
+	grep -q "perf_base_url:" ../.github/workflows/backend-smoke.yml; \
+	grep -q "perf_rule_id:" ../.github/workflows/backend-smoke.yml; \
+	grep -q "PERF_BASE_URL source:" ../.github/workflows/backend-smoke.yml; \
+	grep -q "scheduler_lag_p95_seconds:" ../.github/workflows/backend-release-gates.yml; \
+	grep -q "queue_lag_p99_seconds:" ../.github/workflows/backend-release-gates.yml; \
 	echo "ok: smoke workflow dispatch/fallback diagnostics are present"
 
 check-compose-secret-defaults:

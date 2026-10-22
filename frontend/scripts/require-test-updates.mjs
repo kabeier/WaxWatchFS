@@ -28,7 +28,7 @@ const getChangedFilesOutput = () => {
   try {
     return execFileSync(
       "git",
-      ["diff", "--name-only", "--diff-filter=AMR", `origin/${baseRef}...HEAD`],
+      ["diff", "--name-only", "--relative", "--diff-filter=AMR", `origin/${baseRef}...HEAD`],
       { encoding: "utf8" },
     );
   } catch (error) {
@@ -39,7 +39,7 @@ const getChangedFilesOutput = () => {
       );
       return execFileSync(
         "git",
-        ["diff", "--name-only", "--diff-filter=AMR", `origin/${baseRef}`, "HEAD"],
+        ["diff", "--name-only", "--relative", "--diff-filter=AMR", `origin/${baseRef}`, "HEAD"],
         { encoding: "utf8" },
       );
     }

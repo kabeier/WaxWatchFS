@@ -53,7 +53,7 @@ def changed_files(base_ref: str) -> set[str]:
     if not base_ref:
         return set()
     merge_base = git("merge-base", base_ref, "HEAD")
-    names = git("diff", "--name-only", merge_base)
+    names = git("diff", "--name-only", "--relative", merge_base)
     return {line.strip() for line in names.splitlines() if line.strip()}
 
 

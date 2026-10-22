@@ -17,7 +17,8 @@ TRIGGER_GLOBS: dict[str, tuple[str, ...]] = {
         "scripts/schema_drift_check.py",
     ),
     "CI config": (
-        ".github/workflows/**",
+        "../.github/workflows/backend-*",
+        "../.github/actions/setup-python-env/**",
         ".pre-commit-config.yaml",
     ),
     "task orchestration": (
@@ -36,7 +37,7 @@ TRIGGER_GLOBS: dict[str, tuple[str, ...]] = {
 
 REQUIRED_FILES = {
     "Makefile",
-    ".github/workflows/ci.yml",
+    "../.github/workflows/backend-ci.yml",
 }
 CHANGELOG_FILE = "CHANGELOG.md"
 DOC_GLOBS = (
@@ -49,7 +50,7 @@ CHANGELOG_ALWAYS_REQUIRED_GLOBS = (
     "app/services/**",
     "app/core/config.py",
     "Makefile",
-    ".github/workflows/**",
+    "../.github/workflows/backend-*",
     "alembic/**",
 )
 CHANGELOG_EXCEPTION_ONLY_GLOBS = (
@@ -60,7 +61,7 @@ CHANGELOG_EXCEPTION_ONLY_GLOBS = (
     "scripts/check_change_surface.py",
     "scripts/check_env_sample.py",
     "CONTRIBUTING.md",
-    ".github/pull_request_template.md",
+    "../.github/pull_request_template.md",
     "docs/**/*.md",
 )
 
@@ -105,6 +106,15 @@ def git(*args: str, check: bool = True) -> str:
     return completed.stdout.strip()
 
 
+def to_project_path(repo_path: str) -> str:
+    """Map a repo-root-relative git path to a path relative to this project (backend/).
+
+    Files outside backend/ (for example the monorepo's root .github/) come back as ../<path>.
+    """
+    repo_root = Path(git("rev-parse", "--show-toplevel"))
+    return Path(os.path.relpath(repo_root / repo_path, ROOT)).as_posix()
+
+
 def git_ref_exists(ref: str) -> bool:
     if not ref:
         return False
@@ -134,7 +144,7 @@ def changed_files(base_ref: str) -> set[str]:
         return set()
     merge_base = git("merge-base", base_ref, "HEAD")
     names = git("diff", "--name-only", merge_base, check=False)
-    return {line.strip() for line in names.splitlines() if line.strip()}
+    return {to_project_path(line.strip()) for line in names.splitlines() if line.strip()}
 
 
 def matches_any(path: str, globs: tuple[str, ...]) -> bool:

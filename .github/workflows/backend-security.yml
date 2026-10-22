@@ -1,16 +1,19 @@
-name: Security (CodeQL)
+name: Backend Security (CodeQL)
 
 on:
   push:
     branches: ["main"]
     paths:
-      - "**/*.py"
-      - "pyproject.toml"
-      - "requirements*.txt"
-      - ".github/workflows/security.yml"
+      - "backend/**/*.py"
+      - "backend/pyproject.toml"
+      - "backend/requirements*.txt"
+      - ".github/workflows/backend-security.yml"
       - ".github/codeql/**"
   pull_request:
     branches: ["main"]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-security.yml"
   schedule:
     - cron: "30 5 * * 1"
   workflow_dispatch:
@@ -33,6 +36,7 @@ jobs:
         uses: github/codeql-action/init@v4 # v4
         with:
           languages: python
+          source-root: backend
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4 # v4

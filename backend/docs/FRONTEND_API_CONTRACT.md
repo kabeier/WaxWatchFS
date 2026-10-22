@@ -658,4 +658,4 @@ Enforcement:
 
 ## Change synchronization requirement
 
-If API contract changes add new environment variables, test gates, or command workflow expectations, include matching updates to `Makefile`, `.github/workflows/ci.yml`, and `CONTRIBUTING.md` in the same PR, and update `.env.sample` only when env vars are added/removed or defaults change.
+If API contract changes add new environment variables, test gates, or command workflow expectations, include matching updates to `Makefile`, `.github/workflows/backend-ci.yml`, and `CONTRIBUTING.md` in the same PR, and update `.env.sample` only when env vars are added/removed or defaults change.

@@ -12,7 +12,7 @@ execFileSync("git", ["fetch", "--no-tags", "--depth=1", "origin", baseRef], {
 });
 
 const getChangedFilesOutput = () => {
-  const diffArgs = ["diff", "--name-only", "--diff-filter=AMR"];
+  const diffArgs = ["diff", "--name-only", "--relative", "--diff-filter=AMR"];
 
   try {
     return execFileSync("git", [...diffArgs, `origin/${baseRef}...HEAD`], {

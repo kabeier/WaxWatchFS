@@ -40,8 +40,8 @@ const getDiffOutput = (argsForThreeDot, argsForTwoDot) => {
 };
 
 const changedFilesOutput = getDiffOutput(
-  ["diff", "--name-only", "--diff-filter=AMR", threeDotDiffRange],
-  ["diff", "--name-only", "--diff-filter=AMR", twoDotDiffRange],
+  ["diff", "--name-only", "--relative", "--diff-filter=AMR", threeDotDiffRange],
+  ["diff", "--name-only", "--relative", "--diff-filter=AMR", twoDotDiffRange],
 );
 
 const changedFiles = changedFilesOutput
