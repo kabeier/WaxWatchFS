@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.middleware import GlobalRateLimitMiddleware, RequestIDMiddleware
+from app.api.routers.auth import router as auth_router
 from app.api.routers.dev_ingest import router as dev_ingest_router
 from app.api.routers.dev_runner import router as dev_runner_router
 
@@ -92,12 +93,13 @@ def create_app(*, logging_replace_handlers: bool | None = None) -> FastAPI:
         detail = exc.detail
         message = detail if isinstance(detail, str) else "request failed"
         details = None if isinstance(detail, str) else jsonable_encoder(detail)
+        error_code = getattr(exc, "code", None) or "http_error"
         request_context = {
             "request_id": request_id,
             "method": request.method,
             "path": str(request.url.path),
             "status_code": exc.status_code,
-            "internal_error_code": "http_error",
+            "internal_error_code": error_code,
         }
 
         if exc.status_code >= 500:
@@ -111,9 +113,10 @@ def create_app(*, logging_replace_handlers: bool | None = None) -> FastAPI:
 
         return JSONResponse(
             status_code=exc.status_code,
+            headers=exc.headers,
             content=_error_response_payload(
                 message=message,
-                code="http_error",
+                code=error_code,
                 status=exc.status_code,
                 details=details,
             ),
@@ -157,6 +160,7 @@ def create_app(*, logging_replace_handlers: bool | None = None) -> FastAPI:
         )
 
     app.include_router(health_router)
+    app.include_router(auth_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
     app.include_router(provider_requests_router, prefix="/api")
     app.include_router(profile_router, prefix="/api")

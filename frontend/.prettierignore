@@ -1,3 +1,9 @@
 dist
 node_modules
 package-lock.json
+
+# Byte-identical mirrors of backend/docs/ files; checked by .github/workflows/contract-sync.yml.
+# Do not reformat: copy them from backend/ instead.
+contracts/openapi.snapshot.json
+reference/openapi.snapshot.json
+reference/FRONTEND_API_CONTRACT_BACKEND.md

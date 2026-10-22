@@ -12,6 +12,7 @@ SHELL := /bin/bash
 # eBay auth logging governance note: OAuth missing-access_token logging/test-path changes require synchronized Makefile/CI/docs/CHANGELOG updates.
 # Scheduler claim governance note: scheduler due-rule locking/concurrency test updates must keep Makefile/CI/docs/CHANGELOG synchronized.
 # Discogs import job governance note: in-flight uniqueness/cooldown concurrency hardening (migration + tests) must keep Makefile/CI/docs/CHANGELOG synchronized.
+# Web login governance note: POST /api/auth/login (Supabase password grant + httpOnly session cookie, SUPABASE_ANON_KEY / AUTH_SESSION_COOKIE_* settings) and cookie-auth/CSRF tests require synchronized Makefile/CI/docs/CHANGELOG/.env.sample updates; frontend snapshot mirrors are enforced by the root contract-sync workflow.
 # Release-match dedupe governance note: NEW_MATCH watch-release idempotency (partial unique index + ON CONFLICT path + concurrency tests) requires synchronized Makefile/CI/docs/CHANGELOG updates.
 
 APP_SERVICE ?= api

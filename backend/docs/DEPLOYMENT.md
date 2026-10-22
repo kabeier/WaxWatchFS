@@ -84,6 +84,24 @@ If your deployment topology differs, override `PROD_REQUIRED_ENV_VARS` explicitl
 make PROD_REQUIRED_ENV_VARS="DATABASE_URL AUTH_ISSUER AUTH_JWKS_URL TOKEN_CRYPTO_KMS_KEY_ID" check-prod-env
 ```
 
+### Web login + session cookie (`POST /api/auth/login`)
+
+The web app signs in through the backend, which exchanges email/password with Supabase Auth (password grant) and sets an httpOnly session cookie. Bearer-token clients are unaffected. Configure:
+
+- `SUPABASE_ANON_KEY`: the Supabase project's public anon/publishable key (never the `service_role` key). Login returns `503 auth_login_unavailable` while unset. It is not in the default `PROD_REQUIRED_ENV_VARS`; add it there if your deployment serves the web app.
+- `SUPABASE_URL` (preferred) or `AUTH_ISSUER`: the password grant is sent to `<SUPABASE_URL>/auth/v1/token?grant_type=password`, falling back to `<AUTH_ISSUER>/token`.
+- `AUTH_LOGIN_TIMEOUT_SECONDS` (default `10.0`): Supabase call timeout.
+- `AUTH_SESSION_COOKIE_NAME` (default `waxwatch_session`), `AUTH_SESSION_COOKIE_SECURE` (default `true`), `AUTH_SESSION_COOKIE_SAMESITE` (`lax` default; `strict`/`none`, where `none` requires `Secure`), `AUTH_SESSION_COOKIE_DOMAIN` (empty = host-only).
+- Cookie-authenticated unsafe requests (`POST`/`PUT`/`PATCH`/`DELETE`) whose `Origin` header is neither this API's *external* origin nor in `CORS_ALLOWED_ORIGINS` are rejected with `403 origin_not_allowed` (CSRF guard). Uvicorn runs without `--proxy-headers`, so the external origin is derived from the proxy's forwarding headers:
+  - host = first value of `X-Forwarded-Host`, else the `Host` header;
+  - if `X-Forwarded-Proto` is present, `Origin` must match `<first X-Forwarded-Proto>://<host>` exactly (default ports ignored);
+  - if `X-Forwarded-Proto` is absent, only the host is compared (scheme-insensitive), so a TLS-terminating proxy that passes the public `Host` through still works.
+- Same-origin deployments (web app reaches this service via `/api` behind a TLS-terminating proxy/LB such as the AWS ALB in `frontend/reference/docs-deploy-aws-ec2.md`, or `frontend/nginx.conf`) work without extra config **as long as the proxy either preserves the public `Host` header or sets `X-Forwarded-Host`** (plus, ideally, `X-Forwarded-Proto`; ALB sets `X-Forwarded-Proto` and preserves `Host`). If a proxy rewrites `Host` to an internal name and sends no `X-Forwarded-Host`, add the public web origin (for example `https://app.example.com`) to `CORS_ALLOWED_ORIGINS`.
+- Cross-origin deployments must set `CORS_ALLOWED_ORIGINS` to the exact web origin and `CORS_ALLOW_CREDENTIALS=true`; cross-site deployments also need `AUTH_SESSION_COOKIE_SAMESITE=none`.
+- Do not expose the API directly to the internet bypassing the proxy if you rely on the forwarding headers; they are trusted as sent (spoofing them only helps a client that is not a browser, which CSRF does not concern).
+- Login attempts are throttled by the existing `RATE_LIMIT_AUTH_ENDPOINT_RPM` / `RATE_LIMIT_AUTH_ENDPOINT_BURST` settings (per client IP).
+- The cookie lives for the Supabase access-token lifetime (`expires_in`); there is no refresh endpoint yet.
+
 ### Secret injection examples
 
 Bash shell example:

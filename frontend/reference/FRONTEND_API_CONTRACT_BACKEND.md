@@ -1,22 +1,17 @@
 # WaxWatch Frontend API Contract
 
-**Contract version:** `2026-03-16.0`
+**Contract version:** `2026-10-22.0`
 
 This contract captures **current API behavior** and maps it to intended React surfaces so frontend can scaffold screens directly from OpenAPI payloads.
 
 ## Changelog
 
-- `2026-03-16.2`
-  - Harmonized auth wording to platform-specific defaults: web uses cookie/session auth where applicable; mobile/native uses bearer auth.
-  - Added explicit endpoint-level auth exceptions/requirements for `/api/stream/events`, `/api/auth/login`, and `/api/me/*`.
-  - Added a contract-consistency checklist item requiring mirrored auth-mode updates in both frontend/backend contract docs.
-
-- `2026-03-16.1`
-  - Added web login endpoint contract for `POST /api/auth/login`, including request body fields used by web/mobile handoff and error-envelope semantics for invalid credentials (`401/403` or `error.code|error.type = invalid_credentials`).
-
-- `2026-03-16.0`
-  - Canonicalized web SSE auth mode as cookie/session based (`credentials: include`) with an explicit exception to the bearer-header default for `/api/stream/events`.
-  - Clarified that bearer headers remain optional for non-web adapters, while web must not rely on JS-managed long-lived tokens.
+- `2026-10-22.0`
+  - Added backend-owned web login: `POST /api/auth/login` (section `4.7`) exchanges email/password with Supabase Auth (password grant) and sets an httpOnly session cookie (`waxwatch_session` by default). The access token is never returned in the response body.
+  - Authenticated endpoints now accept the session cookie when no `Authorization` header is sent (bearer header wins when both are present). Cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` requests carrying an `Origin` header must come from the API's own origin or a `CORS_ALLOWED_ORIGINS` entry, otherwise `403` with `code: origin_not_allowed`.
+  - `POST /api/me/logout`, `DELETE /api/me`, and `DELETE /api/me/hard-delete` now also clear the session cookie (response bodies unchanged).
+  - New error-envelope `code` values: `invalid_credentials`, `email_not_confirmed`, `account_inactive`, `auth_login_unavailable`, `auth_provider_unavailable`, `auth_provider_error`, `origin_not_allowed`. HTTP errors raised with a domain code keep their `status`; other HTTP errors still use `http_error`.
+  - New schemas: `LoginRequest`, `LoginResponse`, `ErrorEnvelope`, `ErrorEnvelopeError`. `frontend/contracts/openapi.snapshot.json` and `frontend/reference/openapi.snapshot.json` are byte-identical copies of `docs/openapi.snapshot.json`, enforced by the repo-root `contract-sync` workflow.
 
 - `2026-03-02.4`
   - Structural cleanup only: reordered section `4.6 Provider Request Observability (User + Admin)` to follow `4.5` and keep all `4.x` endpoint contracts before governance/process sections `5/6/7`.
@@ -74,29 +69,25 @@ This contract captures **current API behavior** and maps it to intended React su
 
 ## 1) Auth + Session Assumptions
 
-- Platform-default auth modes:
-  - **Web (browser):** use cookie/session auth where applicable (`credentials: include`), and do not assume JS-managed long-lived bearer storage is required for all routes.
-  - **Mobile/native:** send `Authorization: Bearer <jwt>` on authenticated endpoints.
+- All user-facing endpoints in this document require an authenticated user, supplied in one of two ways:
+  - **Web (browser):** the httpOnly session cookie set by `POST /api/auth/login` (send requests with `credentials: "include"`). JavaScript never sees the token.
+  - **Mobile/native and other non-browser clients:** `Authorization: Bearer <jwt>` (Supabase access token obtained directly from Supabase Auth).
+  - When both are present the `Authorization` header wins. Missing both yields `401` (`message: "missing bearer token"`).
 - Endpoint-level auth requirements and exceptions:
-  - `GET /api/stream/events`:
-    - **Web:** cookie/session auth (`credentials: include`) is the canonical mode; bearer header may be omitted.
-    - **Mobile/native:** bearer auth is expected when consuming SSE.
-  - `POST /api/auth/login`:
-    - Login/bootstrap endpoint; does **not** require a pre-existing bearer token.
-    - Web uses this to establish/refresh session state; mobile may use it for token handoff/bootstrap flows.
-  - `/api/me/*` (`GET /api/me`, `PATCH /api/me`, `POST /api/me/logout`, `DELETE /api/me`, `DELETE /api/me/hard-delete`):
-    - Requires authenticated user context on all platforms.
-    - **Web:** authenticated session cookie is acceptable.
-    - **Mobile/native:** bearer token is required.
-- JWT requirements:
+  - `POST /api/auth/login`: login/bootstrap endpoint; does **not** require a pre-existing token or cookie.
+  - `GET /api/stream/events`: web uses the session cookie (`EventSource` with `withCredentials`); mobile/native uses bearer auth.
+  - `/api/me/*`: requires an authenticated user on all platforms (cookie for web, bearer for mobile/native).
+- Cookie-session CSRF guard: cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` requests that send an `Origin` header must come from the API's own external origin or an origin listed in `CORS_ALLOWED_ORIGINS`; otherwise `403` with `code: origin_not_allowed`. Behind a TLS-terminating proxy the external origin is derived from `X-Forwarded-Host`/`X-Forwarded-Proto` (first values), else the `Host` header with a scheme-insensitive host comparison, so a same-origin `/api` proxy works without listing the web origin (see `docs/DEPLOYMENT.md`). The cookie is `SameSite=Lax` by default. Bearer-authenticated requests are not subject to this check.
+- JWT requirements (same for header and cookie):
   - Verified against configured JWKS.
   - Must contain valid `exp`, `iss`, `aud`, `sub`.
   - `sub` must be a UUID (used as `user_id`).
 - Missing/invalid token yields a standardized `error` envelope.
 - Session lifecycle assumptions for React:
-  - Primary token issuance/session bootstrap may occur outside this API (Supabase/Auth provider), but web login form submit is handled by `POST /api/auth/login`.
-  - `POST /api/me/logout` returns a logout marker payload for client-side/session-provider sign-out orchestration.
-  - `DELETE /api/me` deactivates local account state; frontend should then clear session and route to signed-out state.
+  - Web session issuance is backend-owned via `POST /api/auth/login` (section `4.7`). The cookie lives as long as the Supabase access token (`expires_in`, typically 3600s); there is no refresh endpoint yet, so after expiry protected calls return `401` and the web app should route to sign-in.
+  - Mobile/native token issuance still happens directly against Supabase Auth.
+  - `POST /api/me/logout` returns a logout marker payload for client-side/session-provider sign-out orchestration and clears the session cookie.
+  - `DELETE /api/me` deactivates local account state and clears the session cookie; frontend should then clear session and route to signed-out state.
   - `DELETE /api/me/hard-delete` immediately and permanently deletes the authenticated user record when it exists.
 
 ---
@@ -147,6 +138,7 @@ All framework/HTTP and validation failures are returned as:
   - `validation_error`
   - `http_error`
   - `rate_limited`
+  - auth/session codes: `invalid_credentials`, `email_not_confirmed`, `account_inactive`, `auth_login_unavailable`, `auth_provider_unavailable`, `auth_provider_error`, `origin_not_allowed` (see sections `1` and `4.7`)
 - Domain not-found and business-rule failures are emitted through `http_error` with useful `message` text.
 
 ### 3.2 Pagination conventions
@@ -180,8 +172,8 @@ Response (array). Use the last row to create the next cursor:
 
 ```json
 [
-  { "id": "c7f...", "created_at": "2026-01-20T12:00:05+00:00", "type": "RULE_UPDATED" },
-  { "id": "9a1...", "created_at": "2026-01-20T12:00:05+00:00", "type": "NEW_MATCH" }
+  {"id": "c7f...", "created_at": "2026-01-20T12:00:05+00:00", "type": "RULE_UPDATED"},
+  {"id": "9a1...", "created_at": "2026-01-20T12:00:05+00:00", "type": "NEW_MATCH"}
 ]
 ```
 
@@ -207,6 +199,7 @@ GET /api/events?offset=-1        # 422 validation_error
 GET /api/events?offset=10&cursor=<token>  # 422 (cannot combine)
 GET /api/events?offset=99999     # 200 []
 ```
+
 
 ### 3.3 Rate limiting + client behavior
 
@@ -245,35 +238,9 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 
 ## 4) Endpoint → React Screen + Action Map
 
-## 4.0 Web Login
-
-### `POST /api/auth/login`
-
-- **Screen:** `LoginPageClient` form submit action.
-- **Request body:**
-
-```json
-{
-  "email": "listener@example.com",
-  "password": "<redacted>",
-  "return_to": "/",
-  "handoff": "waxwatch://auth/callback",
-  "state": "state-123",
-  "nonce": "nonce-123",
-  "expires_at": "2026-01-02T00:00:01.000Z"
-}
-```
-
-- **Success (`200`)**: login accepted; frontend redirects to resolved success destination (`return_to` or handoff callback URL with security params).
-- **Credential failure (`401` or `403`)**: render `Invalid email or password.`
-- **Contracted error-envelope override:** if `error.code` or `error.type` equals `invalid_credentials`, frontend renders `Invalid email or password.` even when status is not `401/403` (for backend compatibility).
-- **Validation failure (`422`)**: frontend shows backend envelope message when present (`error.message`).
-- **Rate limit (`429`)**: frontend shows rate-limited state and uses `Retry-After` / `error.details.retry_after_seconds` when provided.
-
-## 4.1 Search + Save Alert
+## 4.0 Search + Save Alert
 
 ### `POST /api/search`
-
 - **Screen:** `SearchResultsScreen` (search submit + filter changes + pagination).
 - **Action:** Execute listing search against configured providers and render paged aggregated results.
 - **Auth + throttling contract:**
@@ -300,7 +267,6 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
   - Result-row external navigation should use `public_url` for outbound/open-listing actions.
 
 ### `POST /api/search/save-alert`
-
 - **Screen:** `SearchResultsScreen` secondary action (`Save this search`) and `AlertCreateModal`.
 - **Action:** Persist current search criteria as an alert/watch rule.
 - **Auth + throttling contract:**
@@ -321,13 +287,11 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 ## 4.1 Profile / Account
 
 ### `GET /api/me`
-
 - **Screen:** `SettingsProfileScreen` (initial load).
 - **Action:** Load user profile and integrations summary.
 - **Integrations contract detail:** `integrations[]` only includes providers that are both registered and currently enabled by backend configuration (registry-backed list, not the full DB enum). `integrations[].linked` is derived strictly from whether a row exists in `external_account_links` for the same `user_id` and `provider` (for example, Discogs can be linked while eBay is not). `integrations[].watch_rule_count` is computed independently from `watch_search_rules.query.sources` and must not be used to infer linkage state.
 
 ### `PATCH /api/me`
-
 - **Screen:** `SettingsProfileScreen`.
 - **Action:** Save profile edits (display name, preferences).
 - **Persistence semantics (single source of truth):**
@@ -346,19 +310,16 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
   - Hourly/daily frequency can defer pending notifications after a recent successful send on the same channel.
 
 ### `POST /api/me/logout`
-
 - **Screen:** Account menu/global app shell.
 - **Action:** User clicks **Log out**.
 - **Frontend behavior:** Call endpoint, clear local auth/session, redirect to signed-out route.
 
 ### `DELETE /api/me`
-
 - **Screen:** `DangerZoneAccountScreen`.
 - **Action:** User confirms **Deactivate account**.
 - **Frontend behavior:** Show irreversible warning, then clear session after success.
 
 ### `DELETE /api/me/hard-delete`
-
 - **Screen:** `DangerZoneAccountScreen`.
 - **Action:** User confirms **Permanently delete account**.
 - **Backend behavior contract:**
@@ -372,32 +333,26 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 ## 4.2 Discogs Integration + Import Lifecycle
 
 ### `POST /api/integrations/discogs/oauth/start`
-
 - **Screen:** `IntegrationsScreen` connect CTA.
 - **Action:** Start OAuth flow, receive `authorize_url`, `state`, selected `scopes`, and expiry metadata.
 
 ### `POST /api/integrations/discogs/oauth/callback`
-
 - **Screen:** `DiscogsOAuthCallbackScreen` route action.
 - **Action:** Exchange callback `code` + `state` for provider token. Backend validates stored state nonce + expiry before linking account.
 
 ### `POST /api/integrations/discogs/connect`
-
 - **Screen:** Internal/admin fallback only.
 - **Action:** Directly store Discogs account/token metadata without OAuth redirect.
 
 ### `GET /api/integrations/discogs/status`
-
 - **Screen:** `IntegrationsScreen`.
 - **Action:** Determine whether to show **Connect**, **Reconnect**, or **Import** CTA. `connected=true` only after OAuth callback has completed and an access token exists.
 
 ### `POST /api/integrations/discogs/disconnect`
-
 - **Screen:** `IntegrationsScreen` disconnect action.
 - **Action:** Revoke provider token (best effort) and remove local link/token metadata.
 
 ### `POST /api/integrations/discogs/import`
-
 - **Screen:** `DiscogsImportScreen`.
 - **Action:** Start import (`wantlist`, `collection`, `both`).
 - **Frontend behavior:** Store returned `job_id` and poll job endpoint.
@@ -405,7 +360,6 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 - **In-flight dedupe contract:** If a same-scope job is already `pending`/`running`, endpoint returns that existing job (`200`) without redispatching, so clients may receive the same `job_id` across repeated clicks/retries.
 
 ### `GET /api/integrations/discogs/import/{job_id}`
-
 - **Screen:** `DiscogsImportScreen` progress panel.
 - **Action:** Poll import status until terminal state.
 - **Terminal UX:** On `completed` or `failed`, show counts/errors and CTA to review watch items.
@@ -413,7 +367,6 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 - **Deduping expectation:** Repeated user-triggered refreshes or scheduler ticks may return an existing in-flight/recent job instead of creating a new one. Frontend should tolerate unchanged `job_id` values and continue polling that job.
 
 ### `GET /api/integrations/discogs/imported-items?source={wantlist|collection}&limit={1-100}&offset={>=0}`
-
 - **Screen:** `DiscogsImportedItemsScreen` source tabs (`wantlist`, `collection`).
 - **Action:** Fetch paginated imported items for one source at a time.
 - **Behavior:**
@@ -444,7 +397,6 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 ```
 
 ### `GET /api/integrations/discogs/imported-items/{watch_release_id}/open-in-discogs?source={wantlist|collection}`
-
 - **Screen:** imported-item row action (`Edit in Discogs`).
 - **Action:** Resolve an explicit Discogs URL for an imported row and source.
 - **Behavior:**
@@ -462,7 +414,6 @@ Frontend guidance: pause automatic retries until `Retry-After` elapses, apply ex
 ```
 
 Lifecycle summary:
-
 1. `status` load
 2. `oauth/start` to create state nonce + redirect URL
 3. Redirect to Discogs auth and return to frontend
@@ -490,14 +441,12 @@ The API has two watch paradigms; frontend can present both under a single “Ale
 - `DELETE /api/watch-rules/{rule_id}/hard` → permanent delete.
 
 **Screens + actions:**
-
 - `AlertsListScreen`: view + paginate + disable/hard-delete.
 - `AlertEditorScreen`: create/update rule name, sources, polling interval.
 - `query.sources` is validated against the live provider registry; values must be registered+enabled provider keys. Frontend must not submit enum-only/disabled values, and should refresh provider choices from profile integrations or provider-capabilities endpoints.
 - `AlertDetailScreen`: inspect scheduling fields (`last_run_at`, `next_run_at`).
 
 **Query validation contract (create + patch):**
-
 - Known query keys and accepted value types:
   - `sources`: required on create; list of provider strings (`discogs`, `ebay`), case-insensitive and normalized to lowercase.
   - `keywords`: optional list of strings; values are trimmed/lowercased and empty/whitespace-only entries are rejected when list is provided.
@@ -550,7 +499,6 @@ The API has two watch paradigms; frontend can present both under a single “Ale
 - `DELETE /api/watch-releases/{watch_release_id}` → disable entry.
 
 **Frontend contract updates (Discogs identity modes):**
-
 - `watch_releases` payloads now include:
   - `discogs_release_id` (required): exact release identity.
   - `discogs_master_id` (optional): Discogs master identity.
@@ -560,7 +508,6 @@ The API has two watch paradigms; frontend can present both under a single “Ale
 - Listing payloads now expose optional `discogs_master_id` alongside `discogs_release_id`.
 
 **Screens + actions:**
-
 - `WatchlistScreen`: list/manage release watches.
 - `WatchlistItemEditor`: set target price, condition, active state, and identity `match_mode`.
 
@@ -569,24 +516,21 @@ The API has two watch paradigms; frontend can present both under a single “Ale
 ## 4.4 Notification Inbox + Realtime
 
 ### `GET /api/notifications?limit=`
-
 - **Screen:** `NotificationInboxScreen`.
 - **Action:** Initial list load / infinite append by increasing limit.
 
 ### `POST /api/notifications/{notification_id}/read`
-
 - **Screen:** `NotificationInboxScreen`.
 - **Action:** **Dismiss notification** / mark as read.
 
 ### `GET /api/notifications/unread-count`
-
 - **Screen:** app header badge.
 - **Action:** Poll for unread count on interval or after read actions.
 
 ### `GET /api/stream/events` (SSE)
-
 - **Screen:** app shell/event bridge.
 - **Action:** Subscribe once per authenticated session; fan out to inbox/badge stores.
+- **Auth:** web clients rely on the session cookie (`EventSource(url, { withCredentials: true })`) and should not depend on JS-managed bearer tokens; mobile/native adapters may attach a bearer token instead.
 - **SSE event name:** `notification`
 - **SSE payload shape:**
 
@@ -600,19 +544,15 @@ The API has two watch paradigms; frontend can present both under a single “Ale
 ```
 
 Recommended client behavior:
-
 - Append/merge realtime events into inbox cache.
 - Refresh unread badge after incoming realtime payload.
 - Reconnect SSE with exponential backoff on disconnect.
-- **Auth exception for web SSE:** for `GET /api/stream/events`, web clients should use cookie/session auth (`credentials: include`) and should not depend on JS-managed bearer tokens.
-- **Non-web compatibility:** mobile/native adapters may still attach a short-lived bearer token where platform auth does not use browser cookies.
 
 ---
 
 ## 4.5 Outbound Marketplace Redirects
 
 ### `GET /api/outbound/ebay/{listing_id}`
-
 - **Screen/action:** listing card/button CTA such as `View on eBay`.
 - **Auth requirement:** requires `Authorization: Bearer <jwt>` like other user-facing `/api/**` endpoints.
 - **Response behavior:** returns `307 Temporary Redirect` with `Location` set to the affiliate-decorated eBay URL. Frontend should treat this as a navigation endpoint, not JSON data.
@@ -623,7 +563,6 @@ Recommended client behavior:
 - **Side effect (click logging):** on successful redirect path, backend inserts an `outbound_clicks` record with authenticated `user_id`, `listing_id`, provider, and optional `Referer` header value.
 
 Frontend guidance:
-
 - **Open behavior:** invoke from direct user interaction and open in a new tab/window (for example `target="_blank" rel="noopener noreferrer"`) so the app session remains in-place.
 - **Analytics expectations:** frontend may emit a local `outbound_click_attempted` event, but backend click logging is the source of truth for successful outbound redirects.
 - **Retry handling:**
@@ -635,13 +574,11 @@ Frontend guidance:
 ## 4.6 Provider Request Observability (User + Admin)
 
 ### `GET /api/provider-requests`
-
 - **Audience:** Authenticated end user.
 - **Scope:** Returns only the caller's `provider_requests` rows.
 - **Pagination:** Supports shared pagination params (`limit`, `offset`, `cursor`) with stable ordering (`created_at DESC, id DESC`).
 
 ### `GET /api/provider-requests/summary`
-
 - **Audience:** Authenticated end user.
 - **Scope:** Per-provider summary for only the caller's rows.
 - **Response fields:**
@@ -651,7 +588,6 @@ Frontend guidance:
   - `avg_duration_ms`
 
 ### `GET /api/provider-requests/admin`
-
 - **Audience:** Admin-only (claim/role-gated).
 - **Scope:** Cross-user query endpoint for provider request diagnostics.
 - **Authorization contract:** Caller must include admin-capable claims (for example `role=admin`, `user_role=admin`, `app_metadata.roles` containing `admin`, or equivalent admin permission claim).
@@ -669,7 +605,6 @@ Frontend guidance:
 - **Response shape:** Same as user list plus `id` and `user_id` to support cross-user triage views.
 
 ### `GET /api/provider-requests/admin/summary`
-
 - **Audience:** Admin-only (same auth gate as `/admin`).
 - **Scope:** Cross-user summary grouped by `provider`.
 - **Filtering params:** Same filter set as `/api/provider-requests/admin`.
@@ -681,10 +616,56 @@ Frontend guidance:
 
 ---
 
+## 4.7 Web Login (Session Cookie)
+
+### `POST /api/auth/login`
+
+- **Screen:** `LoginPageClient` form submit (`frontend/app/(auth)/login/LoginPageClient.tsx`), sent with `credentials: "include"`.
+- **Auth:** none required. Protected by the `auth_endpoints` rate-limit scope (`RATE_LIMIT_AUTH_ENDPOINT_RPM` / `_BURST`, keyed per client IP; rotating bogus cookies/bearers share one `anon:<client>:bearer` budget).
+- **Request body (`LoginRequest`):**
+
+```json
+{
+  "email": "listener@example.com",
+  "password": "<redacted>",
+  "return_to": "/",
+  "handoff": "waxwatch://auth/callback",
+  "state": "state-123",
+  "nonce": "nonce-123",
+  "expires_at": "2026-01-02T00:00:01.000Z"
+}
+```
+
+  - `email` (valid email) and `password` (non-empty) are required.
+  - `return_to`, `handoff`, `state`, `nonce`, `expires_at` are optional strings accepted for the web/mobile handoff flow. The backend does **not** mint handoff tokens or validate `state`/`nonce`/`expires_at`; the web client enforces handoff expiry/parameter checks before and after submit.
+- **Backend behavior:** calls Supabase Auth `POST <SUPABASE_URL>/auth/v1/token?grant_type=password` (falls back to `<AUTH_ISSUER>/token` when `SUPABASE_URL` is unset) with the public `SUPABASE_ANON_KEY`, verifies the returned access token with the same JWKS verifier used for bearer auth, then sets the session cookie.
+- **Success (`200`, `LoginResponse`):**
+
+```json
+{ "success": true, "redirect_to": "/" }
+```
+
+  - `redirect_to` echoes `return_to` only when it is a same-origin relative path (starts with `/`, not `//`, no backslashes); otherwise `/`.
+  - `Set-Cookie: waxwatch_session=<access token>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=<expires_in>` (name/Secure/SameSite/Domain configurable via `AUTH_SESSION_COOKIE_*`). The token is never included in the JSON body.
+- **Errors (all use the section `3.1` envelope):**
+  - `401` `invalid_credentials`: wrong email/password (Supabase `400`, `invalid_credentials`/`invalid_grant`).
+  - `403` `email_not_confirmed`: Supabase account email not confirmed.
+  - `403` `account_inactive`: the WaxWatch account was deactivated (`DELETE /api/me`); no cookie is set.
+  - `403` `origin_not_allowed`: request `Origin` is neither the API's own external origin (proxy-aware, see section `1`) nor in `CORS_ALLOWED_ORIGINS`.
+  - `422` `validation_error`: malformed body (for example invalid email, empty password).
+  - `429` `rate_limited`: local `auth_endpoints` budget exhausted, or Supabase throttled the login (its `Retry-After` is forwarded; `error.details.scope = "auth_endpoints"`).
+  - `503` `auth_login_unavailable`: login not configured (`SUPABASE_ANON_KEY` or auth base URL missing).
+  - `503` `auth_provider_unavailable`: Supabase unreachable/timeout.
+  - `503` `auth_provider_error`: Supabase `401`/`403`/`5xx` (misconfigured API key or outage), a malformed success payload, or an issued token that fails JWKS verification.
+- **Frontend mapping:** `401`/`403` or `code=invalid_credentials` → "Invalid email or password."; `422` → envelope `message`; `429` → rate-limited state using `Retry-After`; `503` → generic "Unable to sign in" error state.
+- **Same-origin deployments:** when the web app reaches the API via `/api` behind a TLS-terminating proxy/LB, no extra config is needed provided the proxy preserves the public `Host` or sets `X-Forwarded-Host` (see `docs/DEPLOYMENT.md`); otherwise list the web origin in `CORS_ALLOWED_ORIGINS`.
+- **Cross-origin deployments:** when the web app and API are on different origins, set `CORS_ALLOWED_ORIGINS` to the exact web origin and `CORS_ALLOW_CREDENTIALS=true`; if they are on different *sites*, the cookie also needs `AUTH_SESSION_COOKIE_SAMESITE=none` (requires `Secure`).
+
+---
+
 ## 5) OpenAPI Example Alignment (frontend scaffolding guidance)
 
 The OpenAPI schema now includes representative examples for:
-
 - Profile read/update and auth-required operations.
 - Discogs connect/status/import lifecycle.
 - Watch-rule and watch-release create/update/list entities.
@@ -692,7 +673,6 @@ The OpenAPI schema now includes representative examples for:
 - Common validation/error envelope.
 
 Frontend teams should generate API clients from OpenAPI and use examples for:
-
 - mocked storybook fixtures
 - e2e happy-path payload contracts
 - typed form defaults for create/edit flows
@@ -738,14 +718,10 @@ Enforcement:
 - The check fails when API-facing files changed but `docs/FRONTEND_API_CONTRACT.md` was not updated in the same diff.
 - Local equivalents: `make check-contract-sync` and `make check-openapi-snapshot` (or full `make ci-local`).
 - Snapshot gate: CI runs `python -m scripts.openapi_snapshot --check` and compares `app/main.py` generated schema output to the committed `docs/openapi.snapshot.json` baseline. Update the baseline with `make openapi-snapshot` whenever intentional API schema changes are introduced.
-
-Contract consistency checklist (auth mode drift prevention):
-
-- If auth mode assumptions change (for example cookie/session vs bearer defaults), update both `docs/FRONTEND_API_CONTRACT.md` and `reference/FRONTEND_API_CONTRACT_BACKEND.md` in the same PR.
-- Re-verify endpoint-level exceptions (`/api/stream/events`, `/api/auth/login`, `/api/me/*`) are described identically in both files.
+- Frontend mirror gate: the repo-root `.github/workflows/contract-sync.yml` fails when `frontend/contracts/openapi.snapshot.json` or `frontend/reference/openapi.snapshot.json` differ from `backend/docs/openapi.snapshot.json`, or when `frontend/reference/FRONTEND_API_CONTRACT_BACKEND.md` differs from this file. After `make openapi-snapshot` (or any edit to this file), copy the files verbatim into those frontend paths in the same PR (they are excluded from frontend Prettier so the bytes stay identical). If auth-mode assumptions change, also update the frontend-owned `frontend/docs/FRONTEND_API_CONTRACT.md`.
 
 ---
 
 ## Change synchronization requirement
 
-If API contract changes add new environment variables, test gates, or command workflow expectations, include matching updates to `Makefile`, `.github/workflows/ci.yml`, and `CONTRIBUTING.md` in the same PR, and update `.env.sample` only when env vars are added/removed or defaults change.
+If API contract changes add new environment variables, test gates, or command workflow expectations, include matching updates to `Makefile`, `.github/workflows/backend-ci.yml`, and `CONTRIBUTING.md` in the same PR, and update `.env.sample` only when env vars are added/removed or defaults change.

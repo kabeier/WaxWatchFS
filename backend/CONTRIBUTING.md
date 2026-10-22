@@ -292,6 +292,11 @@ When updating request throttling behavior, keep these surfaces synchronized in t
 - `CHANGELOG.md` under `Unreleased`.
 
 Always add/adjust tests under `tests/` for both limit-exceeded and exempt-path behavior.
+- The web session cookie (`AUTH_SESSION_COOKIE_NAME`) counts as a credential for principal keying exactly like a bearer header, so cookie spray shares the `anon:<client>:bearer` budget on `require_authenticated_principal=True` scopes (including `auth_endpoints` on `POST /api/auth/login`).
+
+## API contract mirror (frontend copies)
+
+`frontend/contracts/openapi.snapshot.json`, `frontend/reference/openapi.snapshot.json`, and `frontend/reference/FRONTEND_API_CONTRACT_BACKEND.md` are byte-identical copies of `docs/openapi.snapshot.json` and `docs/FRONTEND_API_CONTRACT.md`. After `make openapi-snapshot` or a contract-doc edit, copy them over in the same PR (from the repo root: `cp backend/docs/openapi.snapshot.json frontend/contracts/openapi.snapshot.json`, and likewise for the other two). The repo-root `.github/workflows/contract-sync.yml` fails on drift.
 - For scoped dependencies that set `require_authenticated_principal=True`, verify unresolved principals (missing/invalid bearer) still consume shared scoped budget (`anon:<client>` / `anon:<client>:bearer`) and can return `429` before auth dependency rejection on subsequent attempts.
 
 ## Integration hygiene reminder

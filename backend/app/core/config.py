@@ -124,6 +124,15 @@ class Settings(BaseSettings):
     auth_jwks_cache_ttl_seconds: int = 300
     auth_clock_skew_seconds: int = 30
 
+    # Web login (`POST /api/auth/login`): password grant against Supabase Auth + httpOnly session cookie.
+    # SUPABASE_ANON_KEY is the project's public anon/publishable key (sent as the `apikey` header).
+    supabase_anon_key: str | None = None
+    auth_login_timeout_seconds: float = 10.0
+    auth_session_cookie_name: str = "waxwatch_session"
+    auth_session_cookie_secure: bool = True
+    auth_session_cookie_samesite: str = "lax"
+    auth_session_cookie_domain: str | None = None
+
     # DB pooling
     # - "null" Supabase / pgbouncer handles pooling
     # - "queue"  for  Postgres
@@ -146,6 +155,16 @@ class Settings(BaseSettings):
 
         if self.cors_allow_credentials and any(header == "*" for header in self.cors_allowed_headers):
             raise ValueError("cors_allowed_headers cannot include '*' when cors_allow_credentials is true")
+
+        self.auth_session_cookie_samesite = self.auth_session_cookie_samesite.strip().lower()
+        if self.auth_session_cookie_samesite not in {"lax", "strict", "none"}:
+            raise ValueError("auth_session_cookie_samesite must be one of: lax, strict, none")
+        if self.auth_session_cookie_samesite == "none" and not self.auth_session_cookie_secure:
+            raise ValueError("auth_session_cookie_samesite=none requires auth_session_cookie_secure=true")
+        if not self.auth_session_cookie_name.strip():
+            raise ValueError("auth_session_cookie_name must not be empty")
+        if self.auth_session_cookie_domain is not None and not self.auth_session_cookie_domain.strip():
+            self.auth_session_cookie_domain = None
 
         self._provider_availability = {
             "discogs": self._validate_required_fields(
