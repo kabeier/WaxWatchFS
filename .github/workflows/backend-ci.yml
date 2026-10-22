@@ -20,6 +20,8 @@ name: Backend CI
 # eBay auth policy note: OAuth token-response logging semantics (including missing access_token error paths) require synchronized governance/docs/changelog updates.
 # Scheduler claim policy note: due-rule SKIP LOCKED/row-claim behavior and scheduler concurrency tests require synchronized governance/docs/changelog updates.
 # Release-match dedupe policy note: watch-release NEW_MATCH idempotency/concurrency hardening must keep governance/docs/changelog artifacts synchronized.
+# Local hook parity note: repo-root .husky/pre-commit runs `make lint fmt-check typecheck` for staged backend/ files and
+# .husky/pre-push runs `make ci-local` (stops at the first failing segment); keep them aligned with the jobs below.
 # Rate-limit contract note: scoped dependencies with require_authenticated_principal=true must still
 # apply scoped throttling to anonymous callers (anon:<client>) and remain covered by tests/test_rate_limit.py.
 

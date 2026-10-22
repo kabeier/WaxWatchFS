@@ -613,8 +613,8 @@ ci-db-tests:
 
 # Mirrors the GitHub Actions CI job
 ci-local:
-	$(MAKE) ci-static-checks; \
-	$(MAKE) ci-db-tests; \
+	$(MAKE) ci-static-checks && \
+	$(MAKE) ci-db-tests && \
 	$(MAKE) ci-celery-redis-smoke
 
 

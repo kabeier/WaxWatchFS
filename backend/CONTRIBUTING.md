@@ -126,7 +126,7 @@ npm --prefix ../frontend install # husky installs the hooks via the frontend "pr
 The configured hooks are:
 
 - **pre-commit** (when `backend/` files are staged): `make lint fmt-check typecheck` (ruff, ruff format check, mypy)
-- **pre-push** (when pushed commits touch `backend/`): `make ci-local` (full CI-equivalent suite; needs Docker)
+- **pre-push** (when pushed commits touch `backend/`): `make ci-local` (full CI-equivalent suite; stops at the first failing segment; needs Docker)
 
 You can run the same checks on demand:
 
