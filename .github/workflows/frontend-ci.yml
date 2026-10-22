@@ -67,7 +67,7 @@ jobs:
       - name: Detect API/route-page changes
         if: github.event_name == 'pull_request'
         id: api_shape_paths
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             api_or_routes:
@@ -82,7 +82,7 @@ jobs:
       - name: Detect SSE changes
         if: github.event_name == 'pull_request'
         id: sse_paths
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             sse_related:
