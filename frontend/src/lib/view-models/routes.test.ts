@@ -1,0 +1,111 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { MOBILE_NAV_ITEMS } from "@/components/ui/primitives/shell/primitives";
+
+import {
+  mobileNavigationDefinitions,
+  mobileNavigationRouteKeys,
+  primaryNavigationRouteKeys,
+  routeViewModels,
+} from "./routes";
+
+const expectedMobileTabRouteKeys = [
+  "dashboard",
+  "alerts",
+  "watchlist",
+  "notifications",
+  "settings",
+] as const;
+
+const uxExpectedMobileTabLabels = ["Home", "Alerts", "Watchlist", "Notifications", "Settings"];
+
+describe("mobileNavigationRouteKeys", () => {
+  it("matches the canonical mobile tab model and ordering", () => {
+    expect(mobileNavigationRouteKeys).toEqual(expectedMobileTabRouteKeys);
+  });
+
+  it("stays in parity with routes that declare mobile navigation labels", () => {
+    const routeKeysWithMobileNavigationLabel = mobileNavigationDefinitions.map(
+      ({ routeKey }) => routeKey,
+    );
+
+    expect(routeKeysWithMobileNavigationLabel).toEqual(expectedMobileTabRouteKeys);
+    expect(mobileNavigationRouteKeys).toEqual(routeKeysWithMobileNavigationLabel);
+  });
+
+  it("matches UX label/order expectations for the canonical mobile tabs", () => {
+    const resolvedLabels = mobileNavigationDefinitions.map((definition) => definition.label);
+
+    expect(resolvedLabels).toEqual(uxExpectedMobileTabLabels);
+  });
+
+  it("keeps mobile tab routes constrained to the documented mobile subset", () => {
+    const mobileRouteKeySet = new Set<string>(mobileNavigationRouteKeys);
+    const nonTabPrimaryRoutes = primaryNavigationRouteKeys.filter(
+      (routeKey) => !mobileRouteKeySet.has(routeKey),
+    );
+
+    expect(nonTabPrimaryRoutes).toEqual(["search", "integrations"]);
+    expect(
+      mobileNavigationRouteKeys.every((routeKey) => primaryNavigationRouteKeys.includes(routeKey)),
+    ).toBe(true);
+  });
+
+  it("matches rendered MobileTabBar navigation definitions in route order and labels", () => {
+    const expectedTabs = mobileNavigationDefinitions.map(({ routeKey, label }) => {
+      const route = routeViewModels[routeKey];
+
+      return {
+        href: route.path,
+        label,
+      };
+    });
+
+    expect(MOBILE_NAV_ITEMS.map((item) => ({ href: item.href, label: item.label }))).toEqual(
+      expectedTabs,
+    );
+    expect(MOBILE_NAV_ITEMS.map((item) => item.href)).toEqual(
+      mobileNavigationRouteKeys.map((routeKey) => routeViewModels[routeKey].path),
+    );
+  });
+
+  it("keeps MOBILE_NAV_ITEMS route-key order in lockstep with mobileNavigationRouteKeys", () => {
+    const pathToRouteKey = Object.fromEntries(
+      mobileNavigationRouteKeys.map((routeKey) => [routeViewModels[routeKey].path, routeKey]),
+    );
+
+    const mobileNavItemRouteKeys = MOBILE_NAV_ITEMS.map((item) => pathToRouteKey[item.href]);
+
+    expect(mobileNavItemRouteKeys).toEqual([...mobileNavigationRouteKeys]);
+  });
+
+  it("matches the documented mobile navigation sequence in docs/ROUTES.md", () => {
+    const routesDoc = readFileSync(resolve(process.cwd(), "docs/ROUTES.md"), "utf8");
+    const mobileNavigationSection = routesDoc.match(
+      /### Mobile (?:bottom navigation|primary nav(?: \([^)]+\))?|tab behavior \(actual\))\s+([\s\S]*?)\n\s*`\/search`/,
+    )?.[1];
+
+    expect(mobileNavigationSection).toBeDefined();
+
+    const documentedMobileItems = Array.from(
+      mobileNavigationSection?.matchAll(/^\d+\.\s+([^(]+)\(`([^`]+)`\)/gm) ?? [],
+      ([, label, path]) => ({ label: label.trim(), path }),
+    );
+
+    expect(documentedMobileItems.length).toBeGreaterThan(0);
+
+    const routePathToKey = Object.fromEntries(
+      Object.entries(routeViewModels).map(([routeKey, route]) => [route.path, routeKey]),
+    );
+    const documentedMobileRouteKeys = documentedMobileItems.map(({ path }) => routePathToKey[path]);
+    const documentedMobileLabels = documentedMobileItems.map(({ label }) => label);
+
+    expect(documentedMobileRouteKeys.every((routeKey) => Boolean(routeKey))).toBe(true);
+    expect(documentedMobileRouteKeys).toEqual([...mobileNavigationRouteKeys]);
+    expect(documentedMobileLabels).toEqual(mobileNavigationDefinitions.map((item) => item.label));
+    expect(documentedMobileLabels).toEqual(uxExpectedMobileTabLabels);
+    expect(MOBILE_NAV_ITEMS.map((item) => item.label)).toEqual(documentedMobileLabels);
+  });
+});

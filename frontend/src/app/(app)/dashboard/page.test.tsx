@@ -1,0 +1,522 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import DashboardPage from "../../../../app/(app)/dashboard/page";
+
+const hookMocks = vi.hoisted(() => ({
+  notifications: vi.fn(),
+  unreadCount: vi.fn(),
+  releases: vi.fn(),
+  rules: vi.fn(),
+}));
+
+vi.mock("@/lib/query/hooks", () => ({
+  useDashboardNotificationsPreviewQuery: hookMocks.notifications,
+  useUnreadNotificationCountQuery: hookMocks.unreadCount,
+  useDashboardWatchReleasesPreviewQuery: hookMocks.releases,
+  useDashboardWatchRulesPreviewQuery: hookMocks.rules,
+}));
+
+describe("/dashboard route", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hookMocks.notifications.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.unreadCount.mockReturnValue({
+      data: { unread_count: 1 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.releases.mockReturnValue({
+      data: [
+        {
+          id: "release-1",
+          user_id: "user-1",
+          discogs_release_id: 1,
+          discogs_master_id: null,
+          match_mode: "exact_release",
+          title: "Kind of Blue",
+          artist: "Miles Davis",
+          year: 1959,
+          target_price: 25,
+          currency: "USD",
+          min_condition: "VG+",
+          is_active: true,
+          created_at: "2026-03-21T08:00:00.000Z",
+          updated_at: "2026-03-22T10:00:00.000Z",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.rules.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+  });
+
+  it("shows success content with dashboard navigation actions", () => {
+    render(<DashboardPage />);
+
+    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open notifications/i })).toHaveAttribute(
+      "href",
+      "/notifications",
+    );
+    expect(screen.getByRole("link", { name: /kind of blue/i })).toHaveAttribute(
+      "href",
+      "/watchlist/release-1",
+    );
+    expect(screen.getByText(/no notifications yet/i)).toBeInTheDocument();
+  });
+
+  it("shows empty-state copy across dashboard cards", () => {
+    hookMocks.notifications.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.releases.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.rules.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(/recent matches will appear here/i)).toBeInTheDocument();
+    expect(screen.getByText(/no recent matches yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no watch rules yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no notifications yet/i)).toBeInTheDocument();
+  });
+
+  it("shows loading copy first, then presents content once dashboard data arrives", () => {
+    hookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.releases.mockReturnValueOnce({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.rules.mockReturnValueOnce({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    const { rerender } = render(<DashboardPage />);
+
+    expect(screen.getByRole("heading", { name: /loading notifications/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /loading recent matches/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /loading watch rules/i })).toBeInTheDocument();
+
+    hookMocks.notifications.mockReturnValueOnce({
+      data: [
+        {
+          id: "notification-2",
+          user_id: "user-1",
+          event_type: "price_drop",
+          payload: {},
+          channel: "email",
+          status: "sent",
+          is_read: false,
+          created_at: "2026-03-22T10:00:00.000Z",
+          read_at: null,
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.releases.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    hookMocks.rules.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    rerender(<DashboardPage />);
+
+    expect(
+      screen.queryByRole("heading", { name: /loading notifications/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/price_drop/i)).toBeInTheDocument();
+  });
+
+  it("shows API error and cooldown states with disabled and retry actions", () => {
+    const retryNotifications = vi.fn();
+    const retryUnreadCount = vi.fn();
+    const retryReleases = vi.fn();
+    const retryRules = vi.fn();
+
+    hookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "Notifications unavailable" },
+      retry: retryNotifications,
+    });
+    hookMocks.unreadCount.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "Unread unavailable" },
+      retry: retryUnreadCount,
+    });
+    hookMocks.releases.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "rate_limited", message: "Cooldown active", retryAfterSeconds: 45 },
+      retry: retryReleases,
+    });
+    hookMocks.rules.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "Rules unavailable" },
+      retry: retryRules,
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(/unread count unavailable/i)).toBeInTheDocument();
+
+    expect(screen.getByText(/could not load notifications\./i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry notifications/i }));
+    expect(retryNotifications).toHaveBeenCalledTimes(1);
+    expect(retryUnreadCount).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByText(/recent matches are temporarily rate limited/i)).toBeInTheDocument();
+    expect(screen.getByText(/retry-after:\s*45s/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry available in 45s/i })).toBeDisabled();
+    expect(retryReleases).not.toHaveBeenCalled();
+
+    expect(screen.getByText(/could not load watch rules\./i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry watch rules/i }));
+    expect(retryRules).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows rule cooldown messaging with disabled retry until window expires", () => {
+    const retryRules = vi.fn();
+    hookMocks.rules.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "rate_limited", message: "Rules cooldown", retryAfterSeconds: 18 },
+      retry: retryRules,
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(/watch rules are temporarily rate limited/i)).toBeInTheDocument();
+    const cooldownButton = screen.getByRole("button", { name: /retry available in 18s/i });
+    expect(cooldownButton).toBeDisabled();
+    fireEvent.click(cooldownButton);
+    expect(retryRules).not.toHaveBeenCalled();
+  });
+
+  it("shows notifications cooldown messaging with disabled retry action", () => {
+    const retryNotifications = vi.fn();
+    hookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "rate_limited", message: "Notifications cooldown", retryAfterSeconds: 12 },
+      retry: retryNotifications,
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(/notifications are temporarily rate limited/i)).toBeInTheDocument();
+    expect(screen.getByText(/retry-after:\s*12s/i)).toBeInTheDocument();
+    const cooldownButton = screen.getByRole("button", { name: /retry available in 12s/i });
+    expect(cooldownButton).toBeDisabled();
+    fireEvent.click(cooldownButton);
+    expect(retryNotifications).not.toHaveBeenCalled();
+  });
+
+  it("shows failure messaging first, then success evidence after retry-driven refresh", () => {
+    hookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "Notifications unavailable" },
+      retry: vi.fn(),
+    });
+
+    const { rerender } = render(<DashboardPage />);
+
+    expect(screen.getByText(/could not load notifications\./i)).toBeInTheDocument();
+
+    hookMocks.notifications.mockReturnValueOnce({
+      data: [
+        {
+          id: "notification-1",
+          user_id: "user-1",
+          event_type: "match_found",
+          payload: {},
+          channel: "email",
+          status: "sent",
+          is_read: false,
+          created_at: "2026-03-22T10:00:00.000Z",
+          read_at: null,
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    rerender(<DashboardPage />);
+
+    expect(screen.getByText(/match_found/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not load notifications\./i)).not.toBeInTheDocument();
+  });
+
+  it("locks readiness with explicit unread-count failure evidence before successful metric recovery", () => {
+    hookMocks.unreadCount.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "Unread unavailable" },
+      retry: vi.fn(),
+    });
+
+    const { rerender } = render(<DashboardPage />);
+
+    expect(screen.getByText(/unread count unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/unread notifications/i)).not.toBeInTheDocument();
+
+    hookMocks.unreadCount.mockReturnValueOnce({
+      data: { unread_count: 7 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    rerender(<DashboardPage />);
+
+    expect(screen.getByText(/unread notifications/i)).toBeInTheDocument();
+    expect(screen.getByText(/^7$/)).toBeInTheDocument();
+    expect(screen.queryByText(/unread count unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it("shows unread-count cooldown failure evidence, then restores metric success on recovery", () => {
+    hookMocks.unreadCount.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "rate_limited", message: "Unread cooldown", retryAfterSeconds: 30 },
+      retry: vi.fn(),
+    });
+
+    const { rerender } = render(<DashboardPage />);
+
+    expect(screen.getByText(/unread count unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/unread notifications/i)).not.toBeInTheDocument();
+
+    hookMocks.unreadCount.mockReturnValueOnce({
+      data: { unread_count: 4 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    rerender(<DashboardPage />);
+
+    expect(screen.getByText(/unread notifications/i)).toBeInTheDocument();
+    expect(screen.getByText(/^4$/)).toBeInTheDocument();
+    expect(screen.queryByText(/unread count unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it("recovers from recent-matches API failure to a successful linked result after retry", () => {
+    const retryReleases = vi.fn();
+
+    hookMocks.releases.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "Releases unavailable" },
+      retry: retryReleases,
+    });
+
+    const { rerender } = render(<DashboardPage />);
+
+    expect(screen.getByText(/could not load recent matches\./i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry recent matches/i }));
+    expect(retryReleases).toHaveBeenCalledTimes(1);
+
+    hookMocks.releases.mockReturnValueOnce({
+      data: [
+        {
+          id: "release-2",
+          user_id: "user-1",
+          discogs_release_id: 2,
+          discogs_master_id: null,
+          match_mode: "exact_release",
+          title: "Blue Train",
+          artist: "John Coltrane",
+          year: 1957,
+          target_price: 30,
+          currency: "USD",
+          min_condition: "VG+",
+          is_active: true,
+          created_at: "2026-03-22T08:00:00.000Z",
+          updated_at: "2026-03-22T11:00:00.000Z",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    rerender(<DashboardPage />);
+
+    expect(screen.getByRole("link", { name: /blue train/i })).toHaveAttribute(
+      "href",
+      "/watchlist/release-2",
+    );
+    expect(screen.queryByText(/could not load recent matches\./i)).not.toBeInTheDocument();
+  });
+
+  it("recovers watch-rules card from API failure after user retry", () => {
+    const retryRules = vi.fn();
+
+    hookMocks.rules.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "Rules unavailable" },
+      retry: retryRules,
+    });
+
+    const { rerender } = render(<DashboardPage />);
+
+    expect(screen.getByText(/could not load watch rules\./i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry watch rules/i }));
+    expect(retryRules).toHaveBeenCalledTimes(1);
+
+    hookMocks.rules.mockReturnValueOnce({
+      data: [
+        {
+          id: "rule-2",
+          user_id: "user-1",
+          name: "Soul Jazz",
+          query: { keywords: ["soul", "jazz"] },
+          is_active: true,
+          poll_interval_seconds: 300,
+          last_run_at: null,
+          next_run_at: "2026-03-22T11:00:00.000Z",
+          created_at: "2026-03-20T08:00:00.000Z",
+          updated_at: "2026-03-22T08:00:00.000Z",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    rerender(<DashboardPage />);
+
+    expect(screen.getByRole("link", { name: /soul jazz/i })).toHaveAttribute(
+      "href",
+      "/alerts/rule-2",
+    );
+    expect(screen.queryByText(/could not load watch rules\./i)).not.toBeInTheDocument();
+  });
+
+  it("clears notifications cooldown state after refresh and restores the open-notifications action", () => {
+    hookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "rate_limited", message: "Notifications cooldown", retryAfterSeconds: 9 },
+      retry: vi.fn(),
+    });
+
+    const { rerender } = render(<DashboardPage />);
+
+    expect(screen.getByText(/notifications are temporarily rate limited/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry available in 9s/i })).toBeDisabled();
+    expect(screen.getByRole("link", { name: /open notifications/i })).toHaveAttribute(
+      "href",
+      "/notifications",
+    );
+
+    hookMocks.notifications.mockReturnValueOnce({
+      data: [
+        {
+          id: "notification-3",
+          user_id: "user-1",
+          event_type: "rule_triggered",
+          payload: {},
+          channel: "email",
+          status: "sent",
+          is_read: false,
+          created_at: "2026-03-22T10:00:00.000Z",
+          read_at: null,
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    rerender(<DashboardPage />);
+
+    expect(screen.queryByText(/temporarily rate limited/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open notifications/i })).toHaveAttribute(
+      "href",
+      "/notifications",
+    );
+    expect(screen.getByText(/rule_triggered/i)).toBeInTheDocument();
+  });
+});

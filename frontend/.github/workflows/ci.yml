@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      APP_BASE_URL: https://waxwatch.example.com
+      NEXT_PUBLIC_APP_NAME: WaxWatch
+      NEXT_PUBLIC_RELEASE_VERSION: ci
+      NEXT_PUBLIC_SENTRY_DSN: https://examplePublicKey@o0.ingest.sentry.io/0
+      SENTRY_DSN: https://exampleSecretKey@o0.ingest.sentry.io/0
+      AWS_REGION: us-east-1
+      AWS_SECRETS_PREFIX: /waxwatch/prod/web
+      SESSION_COOKIE_NAME: waxwatch_session
+      TRUSTED_PROXY_CIDRS: 10.0.0.0/16
+      LOG_LEVEL: info
+      NEXT_PUBLIC_API_BASE_URL: /api
+      CSP_CONNECT_SRC: ""
+      CSP_STYLE_SRC: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Verify Next.js + SWC setup
+        run: |
+          node -e "const pkgs=['next','react','react-dom']; for (const pkg of pkgs){const path=require.resolve(pkg + '/package.json'); const version=require(path).version; console.log(pkg + '@' + version)}"
+          test ! -f .babelrc
+
+      - name: Lockfile reproducibility check
+        run: git diff --exit-code package-lock.json
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Format check (PR changed files)
+        if: github.event_name == 'pull_request'
+        run: npm run format:check:changed
+
+      - name: Detect API/route-page changes
+        if: github.event_name == 'pull_request'
+        id: api_shape_paths
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            api_or_routes:
+              - 'src/lib/api/**'
+              - 'src/lib/query/**'
+              - 'app/(app)/**'
+
+      - name: API shape fixtures gate (PR touched API/route pages)
+        if: github.event_name == 'pull_request' && steps.api_shape_paths.outputs.api_or_routes == 'true'
+        run: npm run test:run -- src/lib/api/api.test.ts -t "contract shape fixtures"
+
+      - name: Detect SSE changes
+        if: github.event_name == 'pull_request'
+        id: sse_paths
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            sse_related:
+              - 'src/components/SseController.tsx'
+              - 'src/components/SseController.test.tsx'
+              - 'docs/SSE_MODEL.md'
+
+      - name: SSE regression gate (PR touched SSE files)
+        if: github.event_name == 'pull_request' && steps.sse_paths.outputs.sse_related == 'true'
+        run: npm run test:run -- src/components/SseController.test.tsx
+
+      - name: Lint
+        run: npm run lint
+      - name: API core boundaries
+        run: npm run lint:api-core-boundaries
+      - name: Env template contract check
+        run: npm run env:check:template
+
+      - name: Test change contract (PR only)
+        if: github.event_name == 'pull_request'
+        run: npm run test:contract
+
+      - name: Route status promotion test gate (PR only)
+        if: github.event_name == 'pull_request'
+        run: npm run docs:route-status-gate
+
+      - name: Unit tests + coverage gates
+        env:
+          NODE_ENV: test
+        run: npm run test:coverage
+
+      - name: Build
+        env:
+          NODE_ENV: production
+        run: npm run build
+
+      - name: Bundle-size budget
+        run: npm run bundle:check
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: E2E tests (smoke-only baseline + route-depth suite)
+        run: npm run e2e:ci
+
+      - name: Accessibility smoke (smoke-only)
+        run: npm run a11y:smoke
+
+      - name: Deployment verification
+        run: npx start-server-and-test start http://127.0.0.1:4173 verify:deployment
+
+      - name: Release checklist
+        run: npm run release:checklist

@@ -1,0 +1,983 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { Notification, WatchRelease, WatchRule } from "@/lib/api/domains/types";
+
+import AccountRemovedPage from "../app/(auth)/account-removed/page";
+import LoginPage from "../app/(auth)/login/page";
+import { LoginPageClient } from "../app/(auth)/login/LoginPageClient";
+import SignedOutPage from "../app/(auth)/signed-out/page";
+import DashboardPage from "../app/(app)/dashboard/page";
+import DangerSettingsPage from "../app/(app)/settings/danger/page";
+import SettingsLandingPage from "../app/(app)/settings/page";
+import WatchlistItemPage from "../app/(app)/watchlist/[id]/page";
+import WatchlistItemClient from "../app/(app)/watchlist/[id]/WatchlistItemClient";
+
+type DashboardPreviewQuery<TData> = {
+  data: TData | undefined;
+  isLoading: boolean;
+  isError?: boolean;
+  error: unknown;
+  retry: ReturnType<typeof vi.fn>;
+};
+
+type WatchlistDetailQuery = {
+  data: WatchRelease | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  retry: ReturnType<typeof vi.fn>;
+};
+
+type WatchlistMutationState = {
+  mutate: ReturnType<typeof vi.fn>;
+  data: unknown;
+  error: unknown;
+  isPending: boolean;
+  isError: boolean;
+};
+
+const noHandoffContext = {
+  returnTo: null,
+  handoffUrl: null,
+  state: null,
+  nonce: null,
+  expiresAt: null,
+  expiresAtEpochMs: null,
+  isExpired: false,
+  hasRequiredSecurityParams: false,
+} as const;
+
+const updateWatchReleaseMutate = vi.hoisted(() => vi.fn());
+const disableWatchReleaseMutate = vi.hoisted(() => vi.fn());
+
+const dashboardFixtures = {
+  notifications: [
+    {
+      id: "notification-1",
+      user_id: "user-1",
+      event_id: "event-1",
+      event_type: "match.created",
+      channel: "email",
+      status: "sent",
+      is_read: false,
+      created_at: "2026-03-22T09:00:00.000Z",
+      read_at: null,
+    },
+  ] satisfies Notification[],
+  releases: [
+    {
+      id: "release-1",
+      user_id: "user-1",
+      discogs_release_id: 1,
+      discogs_master_id: null,
+      match_mode: "exact_release",
+      title: "Kind of Blue",
+      artist: "Miles Davis",
+      year: 1959,
+      target_price: 25,
+      currency: "USD",
+      min_condition: "VG+",
+      is_active: true,
+      created_at: "2026-03-21T08:00:00.000Z",
+      updated_at: "2026-03-22T10:00:00.000Z",
+    },
+  ] satisfies WatchRelease[],
+  rules: [
+    {
+      id: "rule-1",
+      user_id: "user-1",
+      name: "Blue Note wants",
+      query: { keywords: ["blue note"] },
+      is_active: true,
+      poll_interval_seconds: 300,
+      last_run_at: null,
+      next_run_at: "2026-03-22T11:00:00.000Z",
+      created_at: "2026-03-20T08:00:00.000Z",
+      updated_at: "2026-03-22T08:00:00.000Z",
+    },
+  ] satisfies WatchRule[],
+};
+
+const previewHookMocks = vi.hoisted(() => ({
+  notifications: vi.fn<() => DashboardPreviewQuery<Notification[]>>(() => ({
+    data: dashboardFixtures.notifications,
+    isLoading: false,
+    error: null,
+    retry: vi.fn(),
+  })),
+  unreadCount: vi.fn<() => DashboardPreviewQuery<{ unread_count: number }>>(() => ({
+    data: { unread_count: 1 },
+    isLoading: false,
+    isError: false,
+    error: null,
+    retry: vi.fn(),
+  })),
+  releases: vi.fn<() => DashboardPreviewQuery<WatchRelease[]>>(() => ({
+    data: dashboardFixtures.releases,
+    isLoading: false,
+    error: null,
+    retry: vi.fn(),
+  })),
+  rules: vi.fn<() => DashboardPreviewQuery<WatchRule[]>>(() => ({
+    data: dashboardFixtures.rules,
+    isLoading: false,
+    error: null,
+    retry: vi.fn(),
+  })),
+  watchlistDetail: vi.fn<() => WatchlistDetailQuery>(() => ({
+    data: dashboardFixtures.releases[0],
+    isLoading: false,
+    isError: false,
+    error: null,
+    retry: vi.fn(),
+  })),
+  updateWatchRelease: vi.fn<() => WatchlistMutationState>(() => ({
+    mutate: updateWatchReleaseMutate,
+    data: undefined,
+    error: null,
+    isPending: false,
+    isError: false,
+  })),
+  disableWatchRelease: vi.fn<() => WatchlistMutationState>(() => ({
+    mutate: disableWatchReleaseMutate,
+    data: undefined,
+    error: null,
+    isPending: false,
+    isError: false,
+  })),
+  routerPush: vi.fn(),
+  routerRefresh: vi.fn(),
+}));
+
+vi.mock("@/lib/query/hooks", () => ({
+  useDashboardNotificationsPreviewQuery: previewHookMocks.notifications,
+  useUnreadNotificationCountQuery: previewHookMocks.unreadCount,
+  useDashboardWatchReleasesPreviewQuery: previewHookMocks.releases,
+  useDashboardWatchRulesPreviewQuery: previewHookMocks.rules,
+  useMeQuery: () => ({
+    data: {
+      preferences: {
+        delivery_frequency: "instant",
+        notification_timezone: "UTC",
+        quiet_hours_start: 22,
+        quiet_hours_end: 7,
+        notifications_email: true,
+        notifications_push: false,
+      },
+      integrations: [{ provider: "discogs" }],
+    },
+    isLoading: false,
+    isError: false,
+    error: null,
+    retry: vi.fn(),
+  }),
+  useDeactivateAccountMutation: () => ({
+    mutate: vi.fn(),
+    data: undefined,
+    error: null,
+    isPending: false,
+    isError: false,
+  }),
+  useHardDeleteAccountMutation: () => ({
+    mutate: vi.fn(),
+    data: undefined,
+    error: null,
+    isPending: false,
+    isError: false,
+  }),
+}));
+
+vi.mock("../app/(app)/watchlist/[id]/watchlistItemQueryHooks", () => ({
+  useWatchReleaseDetailQuery: previewHookMocks.watchlistDetail,
+  useUpdateWatchReleaseMutation: previewHookMocks.updateWatchRelease,
+  useDisableWatchReleaseMutation: previewHookMocks.disableWatchRelease,
+}));
+
+vi.mock("next/navigation", async () => {
+  const actual = await vi.importActual("next/navigation");
+
+  return {
+    ...actual,
+    useRouter: () => ({
+      push: previewHookMocks.routerPush,
+      refresh: previewHookMocks.routerRefresh,
+    }),
+  };
+});
+
+describe("route shell pages", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    previewHookMocks.notifications.mockImplementation(() => ({
+      data: dashboardFixtures.notifications,
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    }));
+    previewHookMocks.unreadCount.mockImplementation(() => ({
+      data: { unread_count: 1 },
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    }));
+    previewHookMocks.releases.mockImplementation(() => ({
+      data: dashboardFixtures.releases,
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    }));
+    previewHookMocks.rules.mockImplementation(() => ({
+      data: dashboardFixtures.rules,
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    }));
+    previewHookMocks.watchlistDetail.mockImplementation(() => ({
+      data: dashboardFixtures.releases[0],
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    }));
+    previewHookMocks.updateWatchRelease.mockImplementation(() => ({
+      mutate: updateWatchReleaseMutate,
+      data: undefined,
+      error: null,
+      isPending: false,
+      isError: false,
+    }));
+    previewHookMocks.disableWatchRelease.mockImplementation(() => ({
+      mutate: disableWatchReleaseMutate,
+      data: undefined,
+      error: null,
+      isPending: false,
+      isError: false,
+    }));
+  });
+
+  it("renders dashboard with live summary cards and activity sections", () => {
+    const { container } = render(<DashboardPage />);
+
+    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByText("Unread notifications")).toBeInTheDocument();
+    expect(screen.getByText("Recent matches")).toBeInTheDocument();
+    expect(screen.getByText("Alerts snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Recent notifications")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open search/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open alerts/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open notifications/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /kind of blue/i })).toHaveAttribute(
+      "href",
+      "/watchlist/release-1",
+    );
+    expect(previewHookMocks.rules).toHaveBeenCalledWith(4);
+    expect(previewHookMocks.releases).toHaveBeenCalledWith(5);
+    expect(previewHookMocks.notifications).toHaveBeenCalledWith(4);
+    expect(container.querySelector(".ww-wave--active")).toBeInTheDocument();
+  });
+
+  it("renders settings landing in the shared page-view shell with section links", () => {
+    render(<SettingsLandingPage />);
+
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open profile settings/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open alert delivery settings/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open danger zone/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /open integrations/i })).toHaveLength(2);
+  });
+
+  it("renders signed-out follow-up actions with preserved handoff context", async () => {
+    const page = await SignedOutPage({
+      searchParams: Promise.resolve({
+        return_to: "/watchlist",
+        handoff: "waxwatch://auth/callback",
+        state: "state-123",
+        nonce: "nonce-123",
+        expires_at: "2026-01-02T00:00:01.000Z",
+      }),
+    });
+
+    render(page);
+
+    expect(screen.getByRole("heading", { name: "Signed out", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /go to login/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/login?"),
+    );
+  });
+
+  it("renders account-removed follow-up actions with preserved handoff context", async () => {
+    const page = await AccountRemovedPage({
+      searchParams: Promise.resolve({
+        return_to: "/dashboard",
+        handoff: "waxwatch://auth/callback",
+        state: "state-123",
+        nonce: "nonce-123",
+        expires_at: "2026-01-02T00:00:01.000Z",
+      }),
+    });
+
+    render(page);
+
+    expect(screen.getByRole("heading", { name: "Account removed", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /go to login/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/login?"),
+    );
+  });
+
+  it("renders login as first-party credential sign in", async () => {
+    const page = await LoginPage({
+      searchParams: Promise.resolve({}),
+    });
+
+    render(page);
+
+    expect(screen.getByRole("heading", { name: "Login", level: 1 })).toBeInTheDocument();
+    expect(screen.getByText(/sign in with your waxwatch credentials/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+  });
+
+  it("renders login handoff-required empty branch when secure params are missing", async () => {
+    const page = await LoginPage({
+      searchParams: Promise.resolve({ handoff: "waxwatch://auth/callback" }),
+    });
+
+    render(page);
+
+    expect(screen.getByRole("heading", { name: "Login", level: 1 })).toBeInTheDocument();
+    expect(screen.getByText(/secure handoff required/i)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/missing required security parameters/i);
+    expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
+  });
+
+  it("renders /login generic auth failure and rate-limited messages from the sign-in form", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "Auth service unavailable." } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "Too many attempts." } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "20" },
+        }),
+      ) as typeof fetch;
+
+    render(<LoginPageClient handoff={noHandoffContext} fetchImpl={fetchMock} />);
+
+    fireEvent.change(screen.getByLabelText(/email/i), {
+      target: { value: "listener@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "password123" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/auth service unavailable\./i);
+
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/too many attempts\./i);
+    expect(screen.getByRole("alert")).toHaveTextContent(/retry-after:\s*20s/i);
+  });
+
+  it("supports /login retry from invalid credentials to successful redirect", async () => {
+    const onRedirect = vi.fn();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "Invalid email or password." } }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 })) as typeof fetch;
+
+    render(
+      <LoginPageClient handoff={noHandoffContext} fetchImpl={fetchMock} onRedirect={onRedirect} />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/email/i), {
+      target: { value: "listener@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "password123" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/invalid email or password\./i);
+    expect(onRedirect).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    await waitFor(() => expect(onRedirect).toHaveBeenCalledWith("/"));
+  });
+
+  it("renders watchlist item editor route with editable controls", async () => {
+    const page = await WatchlistItemPage({
+      params: Promise.resolve({ id: "release-1" }),
+    });
+
+    render(page);
+
+    expect(screen.getByRole("heading", { name: "Watchlist Item", level: 1 })).toBeInTheDocument();
+    expect(screen.getByLabelText(/target price/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/minimum condition/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/match mode/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /save watchlist updates/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /disable watchlist item/i })).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "notifications",
+      () => previewHookMocks.notifications,
+      /notifications failed to load/i,
+      /retry notifications/i,
+    ],
+    [
+      "recent matches",
+      () => previewHookMocks.releases,
+      /recent matches are temporarily rate limited/i,
+      /retry/i,
+    ],
+    [
+      "watch rules",
+      () => previewHookMocks.rules,
+      /watch rules failed to load/i,
+      /retry watch rules/i,
+    ],
+  ])(
+    "renders dashboard fallback query states for %s panel",
+    (_panelName, hookFactory, expectedMessage, retryLabel) => {
+      const hook = hookFactory();
+      hook.mockReturnValueOnce({
+        data: undefined,
+        isLoading: false,
+        error: expectedMessage.source.includes("temporarily rate limited")
+          ? { kind: "rate_limited", message: "Slow down", retryAfterSeconds: 30 }
+          : { kind: "unknown_error", message: "boom" },
+        retry: vi.fn(),
+      });
+
+      render(<DashboardPage />);
+
+      expect(screen.getByText(expectedMessage)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: retryLabel })).toBeInTheDocument();
+    },
+  );
+
+  it("renders dashboard notifications rate-limited fallback with updated cooldown copy", () => {
+    const retryNotifications = vi.fn();
+    previewHookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      error: { kind: "rate_limited", message: "Slow down", retryAfterSeconds: 30 },
+      retry: retryNotifications,
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(/notifications are temporarily rate limited/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/the dashboard will fill in once the cooldown expires\./i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/retry-after:\s*30s/i)).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: /retry available in 30s/i });
+    expect(retryButton).toBeDisabled();
+    expect(retryNotifications).not.toHaveBeenCalled();
+  });
+
+  it("retries dashboard notifications API errors from the panel action", () => {
+    const retryNotifications = vi.fn();
+    previewHookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      error: { kind: "unknown_error", message: "Notifications service unavailable" },
+      retry: retryNotifications,
+    });
+
+    render(<DashboardPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /retry notifications/i }));
+    expect(retryNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders dashboard empty summary labels and unread-count fallback label", () => {
+    previewHookMocks.notifications.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    previewHookMocks.releases.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    previewHookMocks.rules.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    previewHookMocks.unreadCount.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "unavailable" },
+      retry: vi.fn(),
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText("Unread count unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Watch rules ready to create")).toBeInTheDocument();
+    expect(screen.getByText("Recent matches will appear here")).toBeInTheDocument();
+  });
+
+  it("keeps preview rows visible during dashboard loading refreshes when cached data exists", () => {
+    previewHookMocks.notifications.mockReturnValueOnce({
+      data: dashboardFixtures.notifications,
+      isLoading: true,
+      error: null,
+      retry: vi.fn(),
+    });
+    previewHookMocks.releases.mockReturnValueOnce({
+      data: dashboardFixtures.releases,
+      isLoading: true,
+      error: null,
+      retry: vi.fn(),
+    });
+    previewHookMocks.rules.mockReturnValueOnce({
+      data: dashboardFixtures.rules,
+      isLoading: true,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText("match.created")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /kind of blue/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /blue note wants/i })).toBeInTheDocument();
+    expect(screen.queryByText(/loading notifications/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/loading recent matches/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/loading watch rules/i)).not.toBeInTheDocument();
+  });
+
+  it("prevents invalid watchlist item editor saves and surfaces validation guidance", async () => {
+    render(<WatchlistItemClient id="release-1" />);
+
+    const targetPriceField = screen.getByLabelText(/target price/i);
+    fireEvent.change(targetPriceField, { target: { value: "-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /save watchlist updates/i }));
+
+    expect(
+      screen.getByText(/please fix the highlighted validation issues before saving\./i),
+    ).toBeInTheDocument();
+    expect(updateWatchReleaseMutate).not.toHaveBeenCalled();
+  });
+
+  it("wires helper text to the watchlist active checkbox and restores trigger focus after dialog cancel", async () => {
+    const user = userEvent.setup();
+    render(<WatchlistItemClient id="release-1" />);
+
+    const activeCheckbox = screen.getByRole("checkbox", { name: /watchlist item active/i });
+    const helperText = screen.getByText(
+      /paused watchlist items stay visible but stop matching new listings\./i,
+    );
+    expect(activeCheckbox).toHaveAttribute("aria-describedby", helperText.id);
+
+    const disableTrigger = screen.getByRole("button", { name: /^disable watchlist item$/i });
+    await user.click(disableTrigger);
+    const dialog = screen.getByRole("alertdialog", { name: /disable watchlist item\?/i });
+    expect(within(dialog).getByRole("button", { name: /cancel/i })).toHaveFocus();
+    await user.tab();
+    expect(within(dialog).getByRole("button", { name: /^disable watchlist item$/i })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: /cancel/i })).toHaveFocus();
+    await user.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    expect(disableTrigger).toHaveFocus();
+  });
+
+  it("renders /dashboard preview panels across error, rate-limited, and empty branches", () => {
+    previewHookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      error: { kind: "unknown_error", message: "Notifications unavailable" },
+      retry: vi.fn(),
+    });
+    previewHookMocks.releases.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      error: { kind: "rate_limited", message: "Cooldown active", retryAfterSeconds: 45 },
+      retry: vi.fn(),
+    });
+    previewHookMocks.rules.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(/could not load notifications\./i)).toBeInTheDocument();
+    expect(screen.getByText(/recent matches are temporarily rate limited/i)).toBeInTheDocument();
+    expect(screen.getByText(/retry-after:\s*45s/i)).toBeInTheDocument();
+    expect(screen.getByText(/no watch rules yet/i)).toBeInTheDocument();
+  });
+
+  it("renders dashboard empty cards with current UX labels", () => {
+    previewHookMocks.notifications.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    previewHookMocks.releases.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    previewHookMocks.rules.mockReturnValueOnce({
+      data: [],
+      isLoading: false,
+      error: null,
+      retry: vi.fn(),
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText("No notifications yet")).toBeInTheDocument();
+    expect(screen.getByText("No recent matches yet")).toBeInTheDocument();
+    expect(screen.getByText("No watch rules yet")).toBeInTheDocument();
+    expect(
+      screen.getByText(/recent notification activity will appear here\./i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps /dashboard recoverable after an error by offering a visible retry path", () => {
+    const retryNotifications = vi.fn();
+    previewHookMocks.notifications.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      error: { kind: "unknown_error", message: "Notifications unavailable" },
+      retry: retryNotifications,
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(/could not load notifications\./i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry notifications/i }));
+    expect(retryNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  it("transitions /dashboard notifications from cooldown state back to loaded content", () => {
+    const notificationsState = {
+      data: undefined as Notification[] | undefined,
+      isLoading: false,
+      error: { kind: "rate_limited", message: "Cooldown active", retryAfterSeconds: 10 } as unknown,
+      retry: vi.fn(),
+    };
+    previewHookMocks.notifications.mockImplementation(() => notificationsState);
+
+    const { rerender } = render(<DashboardPage />);
+    expect(screen.getByText(/notifications are temporarily rate limited/i)).toBeInTheDocument();
+
+    notificationsState.error = null;
+    notificationsState.data = dashboardFixtures.notifications;
+    rerender(<DashboardPage />);
+
+    expect(screen.getByText(/recent notifications/i)).toBeInTheDocument();
+    expect(screen.getByText(/match\.created/i)).toBeInTheDocument();
+  });
+
+  it("renders watchlist item detail generic-error branch and retries without route changes", () => {
+    const retryWatchlistLoad = vi.fn();
+    previewHookMocks.watchlistDetail.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "unknown_error", message: "Detail service unavailable" },
+      retry: retryWatchlistLoad,
+    });
+
+    render(<WatchlistItemClient id="release-1" />);
+
+    expect(screen.getByText(/could not load watchlist item detail\./i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry watchlist item load/i }));
+    expect(retryWatchlistLoad).toHaveBeenCalledTimes(1);
+    expect(previewHookMocks.routerPush).not.toHaveBeenCalled();
+    expect(previewHookMocks.routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it("renders watchlist item detail empty and rate-limited branches", () => {
+    previewHookMocks.watchlistDetail.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      retry: vi.fn(),
+    });
+    const { rerender } = render(<WatchlistItemClient id="release-1" />);
+    expect(screen.getByText(/watchlist item not found\./i)).toBeInTheDocument();
+
+    previewHookMocks.watchlistDetail.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "rate_limited", message: "Cooldown", retryAfterSeconds: 45 },
+      retry: vi.fn(),
+    });
+    rerender(<WatchlistItemClient id="release-1" />);
+
+    expect(screen.getByText(/cooldown/i)).toBeInTheDocument();
+    expect(screen.getByText(/retry-after:\s*45s/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry available in 45s/i })).toBeDisabled();
+  });
+
+  it("retries watchlist item load from the rate-limited cooldown state", () => {
+    const retryWatchlistLoad = vi.fn();
+    previewHookMocks.watchlistDetail.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { kind: "rate_limited", message: "Cooldown active", retryAfterSeconds: 45 },
+      retry: retryWatchlistLoad,
+    });
+
+    render(<WatchlistItemClient id="release-1" />);
+
+    expect(screen.getByText(/cooldown active/i)).toBeInTheDocument();
+    const cooldownButton = screen.getByRole("button", { name: /retry available in 45s/i });
+    expect(cooldownButton).toBeDisabled();
+    fireEvent.click(cooldownButton);
+    expect(retryWatchlistLoad).not.toHaveBeenCalled();
+  });
+
+  it("surfaces save mutation failure and rate-limited branches without leaving /watchlist/[id]", () => {
+    const updateState = {
+      mutate: updateWatchReleaseMutate,
+      data: undefined,
+      error: null as unknown,
+      isPending: false,
+      isError: false,
+    };
+    previewHookMocks.updateWatchRelease.mockImplementation(() => updateState);
+
+    const { rerender } = render(<WatchlistItemClient id="release-1" />);
+
+    updateState.isError = true;
+    updateState.error = { kind: "unknown_error", message: "Save failed" };
+    rerender(<WatchlistItemClient id="release-1" />);
+
+    expect(screen.getByText(/could not save watchlist item updates\./i)).toBeInTheDocument();
+    expect(previewHookMocks.routerPush).not.toHaveBeenCalled();
+
+    updateState.error = { kind: "rate_limited", message: "Slow down", retryAfterSeconds: 60 };
+    rerender(<WatchlistItemClient id="release-1" />);
+
+    expect(
+      screen.getByText(
+        /saving watchlist item updates is rate limited\. please wait for cooldown\./i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/retry-after:\s*60s/i)).toBeInTheDocument();
+  });
+
+  it("allows retrying watchlist save after failure and keeps route state stable", () => {
+    const updateState = {
+      mutate: updateWatchReleaseMutate,
+      data: undefined as unknown,
+      error: null as unknown,
+      isPending: false,
+      isError: false,
+    };
+    previewHookMocks.updateWatchRelease.mockImplementation(() => updateState);
+
+    const { rerender } = render(<WatchlistItemClient id="release-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /save watchlist updates/i }));
+    expect(updateWatchReleaseMutate).toHaveBeenCalledTimes(1);
+
+    updateState.isError = true;
+    updateState.error = { kind: "unknown_error", message: "Save failed" };
+    rerender(<WatchlistItemClient id="release-1" />);
+    expect(screen.getByText(/could not save watchlist item updates\./i)).toBeInTheDocument();
+
+    updateState.isError = false;
+    updateState.error = null;
+    updateState.data = { id: "release-1" };
+    fireEvent.click(screen.getByRole("button", { name: /save watchlist updates/i }));
+    rerender(<WatchlistItemClient id="release-1" />);
+
+    expect(updateWatchReleaseMutate).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/success: watchlist item updated\./i)).toBeInTheDocument();
+    expect(previewHookMocks.routerPush).not.toHaveBeenCalled();
+  });
+
+  it("keeps /watchlist/[id] stable through validation, mutation failure, and success feedback", () => {
+    const updateState = {
+      mutate: updateWatchReleaseMutate,
+      data: undefined as unknown,
+      error: null as unknown,
+      isPending: false,
+      isError: false,
+    };
+    previewHookMocks.updateWatchRelease.mockImplementation(() => updateState);
+
+    const initialRender = render(<WatchlistItemClient id="release-1" />);
+
+    fireEvent.change(screen.getByLabelText(/target price/i), { target: { value: "-10" } });
+    fireEvent.click(screen.getByRole("button", { name: /save watchlist updates/i }));
+    expect(
+      screen.getByText(/please fix the highlighted validation issues before saving\./i),
+    ).toBeInTheDocument();
+    expect(updateWatchReleaseMutate).not.toHaveBeenCalled();
+
+    initialRender.unmount();
+    const { rerender } = render(<WatchlistItemClient id="release-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /save watchlist updates/i }));
+    expect(updateWatchReleaseMutate).toHaveBeenCalledTimes(1);
+
+    updateState.isError = true;
+    updateState.error = { kind: "unknown_error", message: "Save failed" };
+    rerender(<WatchlistItemClient id="release-1" />);
+    expect(screen.getByText(/could not save watchlist item updates\./i)).toBeInTheDocument();
+    expect(previewHookMocks.routerPush).not.toHaveBeenCalled();
+
+    updateState.isError = false;
+    updateState.error = null;
+    updateState.data = { id: "release-1" };
+    rerender(<WatchlistItemClient id="release-1" />);
+    expect(screen.getByText(/success: watchlist item updated\./i)).toBeInTheDocument();
+    expect(previewHookMocks.routerPush).not.toHaveBeenCalled();
+    expect(previewHookMocks.routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it("keeps watchlist route in place when disable mutation fails", () => {
+    const disableState = {
+      mutate: disableWatchReleaseMutate,
+      data: undefined,
+      error: null as unknown,
+      isPending: false,
+      isError: false,
+    };
+    previewHookMocks.disableWatchRelease.mockImplementation(() => disableState);
+
+    const { rerender } = render(<WatchlistItemClient id="release-1" />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /disable watchlist item/i })[0]);
+    fireEvent.click(
+      within(screen.getByRole("alertdialog", { name: /disable watchlist item/i })).getByRole(
+        "button",
+        {
+          name: /^disable watchlist item$/i,
+        },
+      ),
+    );
+    expect(disableWatchReleaseMutate).toHaveBeenCalledWith(undefined);
+
+    disableState.isPending = true;
+    rerender(<WatchlistItemClient id="release-1" />);
+    disableState.isPending = false;
+    disableState.isError = true;
+    disableState.error = { kind: "unknown_error", message: "Disable failed" };
+    rerender(<WatchlistItemClient id="release-1" />);
+
+    expect(screen.getByText(/could not disable watchlist item\./i)).toBeInTheDocument();
+    expect(previewHookMocks.routerPush).not.toHaveBeenCalled();
+    expect(previewHookMocks.routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it("allows retrying watchlist disable confirms after failure without leaving /watchlist/[id]", () => {
+    const disableState = {
+      mutate: disableWatchReleaseMutate,
+      data: undefined as unknown,
+      error: null as unknown,
+      isPending: false,
+      isError: false,
+    };
+    previewHookMocks.disableWatchRelease.mockImplementation(() => disableState);
+
+    const { rerender } = render(<WatchlistItemClient id="release-1" />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /disable watchlist item/i })[0]);
+    fireEvent.click(
+      within(screen.getByRole("alertdialog", { name: /disable watchlist item/i })).getByRole(
+        "button",
+        { name: /^disable watchlist item$/i },
+      ),
+    );
+    expect(disableWatchReleaseMutate).toHaveBeenCalledTimes(1);
+
+    disableState.isError = true;
+    disableState.error = { kind: "unknown_error", message: "Disable failed" };
+    rerender(<WatchlistItemClient id="release-1" />);
+
+    expect(screen.getByText(/could not disable watchlist item\./i)).toBeInTheDocument();
+    expect(previewHookMocks.routerPush).not.toHaveBeenCalled();
+    expect(previewHookMocks.routerRefresh).not.toHaveBeenCalled();
+
+    disableState.isError = false;
+    disableState.error = null;
+    fireEvent.click(screen.getAllByRole("button", { name: /disable watchlist item/i })[0]);
+    fireEvent.click(
+      within(screen.getByRole("alertdialog", { name: /disable watchlist item/i })).getByRole(
+        "button",
+        { name: /^disable watchlist item$/i },
+      ),
+    );
+
+    expect(disableWatchReleaseMutate).toHaveBeenCalledTimes(2);
+    expect(previewHookMocks.routerPush).not.toHaveBeenCalled();
+    expect(previewHookMocks.routerRefresh).not.toHaveBeenCalled();
+  });
+
+  it("navigates back to watchlist after disable succeeds post-pending", () => {
+    const disableState = {
+      mutate: disableWatchReleaseMutate,
+      data: undefined,
+      error: null,
+      isPending: false,
+      isError: false,
+    };
+    previewHookMocks.disableWatchRelease.mockImplementation(() => disableState);
+
+    const { rerender } = render(<WatchlistItemClient id="release-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /disable watchlist item/i }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog", { name: /disable watchlist item/i })).getByRole(
+        "button",
+        {
+          name: /^disable watchlist item$/i,
+        },
+      ),
+    );
+
+    disableState.isPending = true;
+    rerender(<WatchlistItemClient id="release-1" />);
+    disableState.isPending = false;
+    rerender(<WatchlistItemClient id="release-1" />);
+
+    expect(previewHookMocks.routerPush).toHaveBeenCalledWith("/watchlist");
+    expect(previewHookMocks.routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders /settings/danger route shell metadata and destructive action affordances", () => {
+    render(<DangerSettingsPage />);
+
+    expect(screen.getByRole("heading", { name: /danger zone/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^deactivate account$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^permanently delete account$/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/danger-zone request status/i)).toBeInTheDocument();
+  });
+});

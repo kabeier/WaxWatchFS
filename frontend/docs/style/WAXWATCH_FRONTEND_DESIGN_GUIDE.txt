@@ -1,0 +1,165 @@
+WAXWATCH FRONTEND DESIGN GUIDE (canonical IA edition)
+====================================================
+
+Purpose
+-------
+This document defines the styling + UI rules for the WaxWatch frontend and records the canonical navigation model that route work must follow.
+
+High-level goals
+----------------
+- Retro-forward, strong brand identity.
+- Dark mode is primary.
+- Signature motif: analog oscilloscope / stock-like waveform trace.
+- UI is modern SaaS structure + warm analog vibe.
+- Minimal layout chrome; visual personality comes from waveform + warm glows.
+
+Key visual metaphor
+-------------------
+Layered waveform trace (signal) = vinyl audio + price movement + alert trigger.
+- Data spikes -> peaks
+- Alerts -> pulses
+- Receiver/hi-fi -> analog warmth
+
+Information Architecture (canonical routes)
+-------------------------------------------
+Signed-out (current product scope):
+- Login/auth entry (`/login`)
+- Signed-out confirmation (`/signed-out`)
+- Account removed confirmation (`/account-removed`)
+
+Signed-out (future/deferred marketing):
+- Landing
+- How it works
+- Pricing
+
+Signed-in (app shell):
+- Dashboard (`/dashboard`) — canonical signed-in landing route
+- Search (`/search`) — primary discovery/action route
+- Alerts (`/alerts`)
+- Watchlist (`/watchlist`)
+- Watchlist item (`/watchlist/:id`)
+- Notifications Inbox (`/notifications`)
+- Integrations (`/integrations`)
+- Settings landing (`/settings`)
+  - Profile (`/settings/profile`)
+  - Alert delivery (`/settings/alerts`)
+  - Danger Zone (`/settings/danger`)
+
+Route policy decisions
+----------------------
+- `/` redirects to `/dashboard`.
+- Search is still a first-class top-level route, but it is no longer the landing route.
+- Integrations is a top-level destination at `/integrations`.
+- `/settings/integrations` exists only as a backward-compatible redirect.
+- Settings is a shell/section for account preferences and destructive account actions, not for integrations.
+
+Navigation layout (final)
+-------------------------
+Desktop:
+- Left sidebar + top utility bar.
+- Sidebar items: Dashboard, Search, Alerts, Watchlist, Notifications, Integrations, Settings.
+- Top utility bar includes notifications badge + account entry.
+- Waveform used as a thin header band accent (calm variant).
+
+Mobile:
+- Bottom tab bar capped at five core items.
+- Tabs: Home (Dashboard), Alerts, Watchlist, Notifications, Settings.
+- Search remains a top-level route, reachable from in-route CTAs/quick actions and direct route entry.
+
+Theme architecture (themeable)
+------------------------------
+All colors come from tokens / CSS variables. No ad-hoc colors.
+
+Primary mode: DARK
+- Use warm espresso background (never pure black).
+- Use warm off-white text (never pure white).
+- Use the waveform palette for brand accents.
+
+Theme should be swappable for future niches by replacing palette tokens.
+
+Primary stripe palette (WaxWatch default)
+-----------------------------------------
+--ww-stripe-deep  = #3B1F14
+--ww-stripe-mid   = #8C3A0F
+--ww-stripe-amber = #D87A00
+--ww-stripe-gold  = #F4B000
+
+Suggested neutral tokens (recommended)
+--------------------------------------
+bg.app        = #1A1411
+bg.surface    = #231A16
+bg.elevated   = #2A1F1A
+border.subtle = #3A2A22
+
+text.primary   = #F4EDE6
+text.secondary = #C7B8AD
+text.muted     = #9C8C80
+
+Waveform system (signature identity)
+------------------------------------
+We use a "rainbow trace" waveform:
+- One canonical waveform path per variant.
+- Draw it 4 times with stacked strokes (deep->mid->amber->gold).
+- Each has its own glow blur and stroke width.
+- Optional "persistence ghost" traces behind.
+
+Variants (canonical):
+- calm   : header bands, subtle chrome
+- active : dividers, hero accents (often subdued/low opacity)
+- spike  : match-found / special moments ONLY (rare)
+
+Alignment:
+- Bottom-biased. The wave should feel like rising energy.
+
+Placement rules:
+- Approved: header band, dividers, hero accents (subdued), empty states, rare highlight moments.
+- Not allowed: behind dense tables, behind forms, behind long text, tiled backgrounds.
+
+Card glow system
+----------------
+Glows must feel like warm analog backlighting:
+- subtle by default
+- slightly stronger on hover
+- active state uses warm amber/gold accent
+
+Do NOT use cyberpunk colors (blue/cyan/purple) for glows.
+
+Motion rules
+------------
+Motion must be smooth and subtle:
+- 150–250ms transitions
+- ease-in-out
+- no bounce, no overshoot
+- Waveform animation, if any: marketing only, 20–30s slow drift. App shell = static.
+
+API contract alignment
+----------------------
+Errors:
+- validation_error.details => field-level errors
+- http_error => global banner/toast
+
+Pagination:
+- offset paging => "Load more" preferred
+- cursor paging => infinite scroll
+- out-of-range returns [] => show empty state (with waveform empty state asset)
+
+SSE Notifications:
+- Single SSE connection per session
+- Exponential backoff reconnect
+- On event: update inbox cache, refresh unread badge, show toast
+
+Guardrails (non-negotiable)
+---------------------------
+Agents MUST NOT:
+- Add new colors outside tokens
+- Use gradients except those defined globally (default: none)
+- Use pure black backgrounds
+- Use waveform behind forms/tables/dense content
+- Randomize waveform shapes per page/render
+- Overuse spike variant
+
+Agents MUST:
+- Use tokenized colors only
+- Use the WaveTrace component for all waveform usage
+- Keep bottom-bias alignment
+- Maintain consistent spacing scale and radius rules

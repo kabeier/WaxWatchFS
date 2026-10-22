@@ -1,0 +1,188 @@
+WAXWATCH PAGEVIEW SPECIFICATIONS (canonical route model)
+=======================================================
+
+Purpose
+-------
+Defines the canonical information architecture, route ownership, and page-level expectations for the signed-in app and required signed-out surfaces.
+
+------------------------------------------------------------
+GLOBAL RULES
+------------------------------------------------------------
+
+- Signed-in product pages live inside AppShell (sidebar + top bar + mobile bottom nav).
+- `/` is not a marketing landing page; it is a signed-in entrypoint that redirects to `/dashboard`.
+- Search remains a primary task flow, but the signed-in landing surface is the dashboard.
+- Integrations live at `/integrations`.
+- `/settings/integrations` remains only as a backward-compatible redirect.
+- Settings owns profile, alert-delivery preferences, and danger-zone actions.
+- Signed-out marketing pages mentioned in the design guide remain future/deferred; current signed-out routes are limited to auth/account-state surfaces.
+- Waveform usage must follow strict rules:
+  - Header: calm
+  - Dividers: active
+  - Special moments: spike (rare)
+- Never place waveform behind dense data.
+- Use cards as the primary grouping unit.
+
+------------------------------------------------------------
+1) DASHBOARD
+------------------------------------------------------------
+
+Canonical route:
+/dashboard
+Alias/entrypoint:
+/
+
+Purpose:
+Quick signed-in overview and launch point into search, alerts, watchlist, notifications, integrations, and settings.
+
+Layout:
+- Top: optional subdued hero/header band
+- Summary + quick-link sections stacked vertically
+- Dashboard may start scaffold-first, but it is the canonical signed-in landing route
+
+Recommended sections:
+1. Summary cards row
+2. Recent matches / latest watch-release activity
+3. Alerts snapshot
+4. Notifications snapshot / activity feed
+5. Quick links to Search, Alerts, Integrations, and Settings
+
+------------------------------------------------------------
+2) SEARCH
+------------------------------------------------------------
+
+Canonical route:
+/search
+
+Purpose:
+Primary discovery flow for listings and the main entry into creating alert rules.
+
+Layout:
+- Search criteria form
+- Results state region
+- Save-as-alert form
+
+------------------------------------------------------------
+3) ALERTS (SEARCH RULES)
+------------------------------------------------------------
+
+Canonical route:
+/alerts
+
+Purpose:
+Manage search-based alert rules.
+
+Layout:
+- Header with title + "Create Alert" button
+- List of rules and related release matches
+- Empty state if no rules exist
+
+------------------------------------------------------------
+4) ALERT EDITOR
+------------------------------------------------------------
+
+Canonical routes:
+/alerts/new
+/alerts/:id
+
+Purpose:
+Create or edit alert rules.
+
+Layout:
+- Centered form card (max width ~720px)
+- Save / Cancel / Delete actions
+
+------------------------------------------------------------
+5) WATCHLIST
+------------------------------------------------------------
+
+Canonical route:
+/watchlist
+
+Purpose:
+Review tracked releases gathered from the user's watch rules and provider imports.
+
+Layout:
+- List or cards of watch releases
+- Actions emphasize inspection and navigation to item detail
+
+------------------------------------------------------------
+6) WATCHLIST ITEM DETAIL / EDITOR SHELL
+------------------------------------------------------------
+
+Canonical route:
+/watchlist/:id
+
+Purpose:
+Provide the canonical item route for one tracked release.
+
+Current product note:
+- This route is the canonical item-detail editor for tracked releases.
+- Editing should mirror the alert-detail centered editor pattern using shared form primitives.
+
+------------------------------------------------------------
+7) NOTIFICATIONS INBOX
+------------------------------------------------------------
+
+Canonical route:
+/notifications
+
+Purpose:
+View system events and unread activity.
+
+Layout:
+- Vertical list with load-more or infinite scroll
+- Mark-read actions
+- SSE inserts new items at the top and updates the unread badge
+
+------------------------------------------------------------
+8) INTEGRATIONS
+------------------------------------------------------------
+
+Canonical route:
+/integrations
+Legacy alias:
+/settings/integrations -> redirect to /integrations
+
+Purpose:
+Manage external account connections, especially Discogs.
+
+Sections:
+1. Connection status
+2. Import actions
+3. Import progress/state
+
+------------------------------------------------------------
+9) SETTINGS LANDING / TAB SHELL
+------------------------------------------------------------
+
+Canonical route:
+/settings
+
+Purpose:
+Act as the settings shell landing page and route directory.
+
+Behavior:
+- Presents links/cards for Profile, Alert Delivery Settings, and Danger Zone
+- Cross-links to top-level Integrations
+
+Child routes:
+- /settings/profile
+- /settings/alerts
+- /settings/danger
+
+------------------------------------------------------------
+10) SIGNED-OUT SURFACES
+------------------------------------------------------------
+
+Current canonical signed-out routes:
+- /login
+- /signed-out
+- /account-removed
+
+Deferred/future marketing surfaces:
+- Landing
+- How it works
+- Pricing
+
+These marketing pages are not part of the current implemented route inventory and should not be treated as required signed-out routes until product scope formally changes.

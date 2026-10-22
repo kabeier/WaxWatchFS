@@ -1,0 +1,162 @@
+# Routes
+
+This app uses Next.js **App Router**.
+
+## Canonical route model
+
+- `app/` is the single source of truth for route ownership.
+- Shell nav definitions in `src/components/ui/primitives/shell/primitives.tsx` and
+  `src/lib/view-models/routes.ts` are the canonical source for desktop/mobile navigation labels and order.
+- `/` is a server redirect entrypoint to `/dashboard`.
+- `/dashboard` is the canonical signed-in landing route.
+- `/search` remains a first-class top-level task route for discovery and save-as-alert flows.
+- `/integrations` is the canonical integrations route.
+- `/settings/integrations` exists only as a compatibility redirect to `/integrations`.
+- `/settings` is a real landing/tab-shell route for account and preference pages.
+
+## Layout groups
+
+Implemented route groups/files:
+
+- `app/(auth)/...` signed-out auth/account-state routes
+- `app/(app)/...` authenticated shell routes
+
+Planned/optional route group (not currently in tree):
+
+- `app/(app)/admin/...` admin routes only if introduced later
+  - Must be gated by feature flag + admin claim per `docs/ADMIN_POLICY.md`
+
+## Design-system guardrails for all new route work
+
+All new route implementation/migration work must compose shared primitives first and avoid route-specific ad-hoc styling patterns.
+
+- Use state primitives from `src/components/ui/primitives/state` for loading, empty, error, and rate-limited route states.
+- Use shell primitives from `src/components/ui/primitives/shell` for route-level layout scaffolding and navigation chrome.
+- Promote any missing visual behavior into shared primitives/tokens before consuming it in route pages.
+
+## Signed-in route inventory
+
+### Primary app destinations
+
+- `/dashboard` — canonical signed-in landing page with live metrics/previews for alerts, watchlist matches, and notifications
+- `/search` — search listings + save search as alert
+- `/alerts` — list alerts (watch rules)
+- `/alerts/new` — create alert
+- `/alerts/[id]` — alert detail/edit
+- `/watchlist` — list/manage tracked releases
+- `/watchlist/[id]` — canonical watchlist item detail/editor with inline validation and confirmed disable flow
+- `/notifications` — inbox + mark read/unread
+- `/integrations` — Discogs connect/import/status
+- `/settings` — settings landing shell
+- `/settings/profile` — profile + preferences
+- `/settings/alerts` — alert delivery settings (quiet hours, frequency)
+- `/settings/danger` — two-card danger zone for deactivate + permanent delete with explicit confirmation dialogs
+
+### Signed-out routes
+
+- `/login` — first-party credential sign-in with secure handoff validation and cooldown-aware rate-limit errors
+- `/signed-out` — post-logout informational state
+- `/account-removed` — post-account-removal informational state
+
+### Compatibility redirects
+
+- `/` -> `/dashboard`
+- `/settings/integrations` -> `/integrations` (immediate compatibility redirect; no dedicated page UI)
+
+### Deferred / future surfaces
+
+- Marketing landing
+- How it works
+- Pricing
+- `/admin/provider-requests` — optional future admin route; if implemented, must follow `docs/ADMIN_POLICY.md`
+
+## Navigation model
+
+> **Canonical source note:** Treat `src/components/ui/primitives/shell/primitives.tsx` as the canonical source for shell navigation surfaces and default nav item wiring (`APP_NAV_ITEMS`, `MOBILE_NAV_ITEMS`, `TopNav`, `SideNav`, `MobileTabBar`). Route metadata in `src/lib/view-models/routes.ts` feeds labels/keys for mobile tab generation. If either changes, update this doc and `docs/IA_MAP.md` in the same PR.
+
+### Navigation surface responsibilities
+
+- **Primary app navigation**
+  - **Desktop/tablet (`>=768px`)**: `SideNav` is the primary destination inventory for signed-in routes.
+  - **Mobile phone (`<=767px`)**: `MobileTabBar` is the primary destination inventory.
+- **Top utility navigation (`TopNav`)**
+  - Always provides brand/home entry (`ShellBrand` -> `/dashboard` by default).
+  - Provides utility/status shortcuts only (not primary route inventory).
+  - On auth-state routes (`app/(auth)`), utilities are intentionally hidden (`showUtilities={false}`).
+
+### Desktop + sidebar behavior (actual)
+
+`SideNav` is wired into the authenticated shell by default and uses `APP_NAV_ITEMS`.
+
+- **Desktop/tablet (`>=768px`)**: sidebar is visible and functions as the primary route map.
+- **Mobile (`<=767px`)**: sidebar remains in shell composition but is hidden by CSS (`.app-shell__sidebar { display: none; }`).
+
+Sidebar route set:
+
+1. Dashboard (`/dashboard`)
+2. Search (`/search`)
+3. Alerts (`/alerts`)
+4. Watchlist (`/watchlist`)
+5. Notifications (`/notifications`)
+6. Integrations (`/integrations`)
+7. Settings (`/settings`)
+
+### Top utility nav role vs primary route navigation
+
+Top nav is intentionally **not** the primary destination inventory.
+
+- Renders `ShellBrand` (brand/home).
+- Renders utility links sourced from `TopNav` utility items (`DEFAULT_UTILITY_ITEMS` fallback; app shell can hydrate via `useAppShellChromeData`).
+- Auth pages (`app/(auth)`) still render brand/home but hide utility links with `showUtilities={false}`.
+
+Default utility links:
+
+- Inbox (`/notifications`)
+- Account (`/settings/profile`)
+
+### Mobile tab behavior (actual)
+
+`MobileTabBar` renders `MOBILE_NAV_ITEMS` (derived from `mobileNavigationRouteKeys`). In `AppShell`, mounting is controlled by `mobileTabBarVisibility`:
+
+- `auto` (authenticated shell default): `MobileOnlySlot` mounts tabs only when viewport is `max-width: 767px`.
+- `always`: `MobileOnlySlot` keeps the tab subtree mounted regardless of viewport.
+
+Shell CSS controls visual display in standard responsive layouts (`.app-shell__bottom-tabs` + `.mobile-tab-bar` on `max-width: 767px`).
+
+Canonical shipped mobile tab set:
+
+1. Home (`/dashboard`)
+2. Alerts (`/alerts`)
+3. Watchlist (`/watchlist`)
+4. Notifications (`/notifications`)
+5. Settings (`/settings`)
+
+`/search` and `/integrations` are intentionally excluded from mobile tabs and remain first-class routes via direct URL and in-flow links/CTAs.
+
+### Pattern summary
+
+- Desktop/tablet: `SideNav` is the primary route map.
+- Mobile phone: `MobileTabBar` is the primary route map.
+- Top nav: utility/status chrome only (brand + utility shortcuts).
+
+## Route maturity/status
+
+Route maturity definitions and the up-to-date status matrix are maintained in `docs/DEVELOPER_REFERENCE.md` under **Route matrix**.
+
+Route maturity promotion/finalization requires fully green gate evidence (`build` + `a11y:smoke` + route-status gate). Until that evidence is available, treat the canonical matrix as the current working status snapshot (not a newly finalized release baseline).
+
+When route statuses change, update that matrix in the same PR so this repo keeps a single canonical status source, and keep this summary aligned when the production-ready route set changes.
+
+## Verification lock (2026-03-26 local full-script rerun)
+
+Requested full verification (`test:run`, `typecheck`, `lint`, `format:check`, `build`, `a11y:smoke`, `docs:route-status-gate`) was rerun on **March 26, 2026** in this workspace.
+
+Result in this workspace: **partially green (environment/network limited)**.
+
+- ✅ `npm run test:run` passed (51/51 files, 432/432 tests).
+- ✅ `npm run typecheck`, `npm run lint`, and `npm run format:check` all passed.
+- ❌ `npm run build` passed env-contract validation, then failed while downloading Next.js SWC binary `@next/swc-linux-x64-gnu` (`ENETUNREACH`), so standalone build output was not generated.
+- ⚠️ `npm run a11y:smoke` failed before browser checks because `npm run start` exited with `startup_missing_build_artifact` (`.next/standalone/server.js` missing).
+- ⚠️ `GITHUB_BASE_REF=main npm run docs:route-status-gate` exited with skip because the script could not fetch `origin/main` (`fatal: 'origin' does not appear to be a git repository`).
+
+Since the full gate run did not complete end-to-end, do not newly finalize route maturity promotions from this workspace run.
