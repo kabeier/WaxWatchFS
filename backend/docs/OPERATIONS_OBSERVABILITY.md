@@ -1,0 +1,353 @@
+# Operations Observability, Dashboards, Alerts, and Runbook
+
+## Key telemetry
+
+### HTTP/API telemetry
+- `waxwatch_request_latency_seconds` (histogram)
+  - Labels: `method`, `path`, `status_code`
+  - Use this for p50/p90/p95 API latency and error-rate splits.
+
+### Provider telemetry
+- `waxwatch_provider_call_results_total` (counter)
+  - Labels: `provider`, `outcome`, `status_code`
+  - `outcome` is one of `success`, `error`, `unknown`.
+- `waxwatch_provider_failures_total` (counter)
+  - Labels: `provider`, `status_code`, `error_type` for explicit provider failure-rate breakdowns.
+
+### Scheduler telemetry
+- `waxwatch_scheduler_rule_outcomes_total` (counter)
+  - Labels: `outcome` (`success` or `failed`)
+- `waxwatch_scheduler_runs_total` (counter)
+  - Labels: `outcome` (`success` if no failed rules in that polling run; else `failed`)
+- `waxwatch_scheduler_lag_seconds` (histogram)
+  - Track scheduler freshness as `execution_started_at - next_run_at` for due rules.
+
+### Listing-match quality telemetry
+- `waxwatch_listing_match_decisions_total` (counter)
+  - Labels: `outcome` (`mapped`, `below_threshold`, `already_mapped`, `no_candidates`).
+- `waxwatch_listing_match_quality_proxy_total` (counter)
+  - Labels: `metric` (`predicted_positive`, `predicted_negative`, `possible_false_positive`, `possible_false_negative`).
+  - These are precision/recall proxy counters to monitor mapping quality drift without hand-labeled truth data.
+
+### Notification policy telemetry
+- `waxwatch_notification_backlog_items` (gauge)
+  - Labels: `channel` (`email`, `realtime`), records pending notification backlog by channel.
+- Track deferral decisions to make delivery lag explainable when quiet hours/frequency are configured.
+- Recommended counters:
+  - `waxwatch_notification_policy_deferrals_total` with labels `reason` (`quiet_hours`, `frequency`) and `channel`.
+  - `waxwatch_notification_policy_timezone_fallback_total` for invalid timezone overrides falling back to UTC.
+
+### Error reporting
+- Optional Sentry integration is enabled only when:
+  - `SENTRY_DSN` is set, and
+  - `ENVIRONMENT` is in `SENTRY_ENABLED_ENVIRONMENTS` (default: `staging,prod`).
+- Each error report includes `request_id` for correlation with logs.
+
+## Health and readiness semantics
+
+- `GET /healthz` is **liveness-only** and does not probe external dependencies. Use this for process/container liveness checks.
+- `GET /readyz` is **readiness** and performs bounded dependency probes with explicit check results.
+  - `db` check: `SELECT 1` with a 1.0s timeout.
+  - `redis` check: required when Celery is not running in eager mode (`CELERY_TASK_ALWAYS_EAGER=false`) and probed with a 1.0s timeout.
+  - In eager-mode environments (typical unit/integration test setup), Redis is reported as `skipped`.
+- `/readyz` returns:
+  - `200` with `{"status":"ready","checks":...}` when all required dependencies are healthy.
+  - `503` with the standard API `error` envelope when any required dependency fails. Readiness details are nested under `error.details`, for example:
+
+```json
+{
+  "error": {
+    "message": "request failed",
+    "code": "http_error",
+    "status": 503,
+    "details": {
+      "status": "not_ready",
+      "reason": "required dependency checks failed",
+      "checks": {
+        "db": {"status": "failed", "reason": "db readiness probe failed: SQLAlchemyError"},
+        "redis": {"status": "ok"}
+      }
+    }
+  }
+}
+```
+
+## Suggested dashboards
+
+### 1) API health dashboard
+- Request rate by endpoint (`sum(rate(waxwatch_request_latency_seconds_count[5m])) by (path, method)`).
+- Latency p95 by endpoint (`histogram_quantile(0.95, sum(rate(waxwatch_request_latency_seconds_bucket[5m])) by (le, path, method))`).
+- 5xx rate by endpoint (`sum(rate(waxwatch_request_latency_seconds_count{status_code=~"5.."}[5m])) by (path)`).
+
+### 2) Provider reliability dashboard
+- Provider call volume (`sum(rate(waxwatch_provider_call_results_total[5m])) by (provider, outcome)`).
+- Provider error ratio (`sum(rate(waxwatch_provider_call_results_total{outcome="error"}[15m])) by (provider) / sum(rate(waxwatch_provider_call_results_total[15m])) by (provider)`).
+- Status-code breakdown (`sum(rate(waxwatch_provider_call_results_total[15m])) by (provider, status_code)`).
+
+### 3) Scheduler health dashboard
+- Scheduler run status (`sum(rate(waxwatch_scheduler_runs_total[10m])) by (outcome)`).
+- Rule outcome failure ratio (`sum(rate(waxwatch_scheduler_rule_outcomes_total{outcome="failed"}[10m])) / sum(rate(waxwatch_scheduler_rule_outcomes_total[10m]))`).
+
+### 4) SLO compliance dashboard
+- Listing-map precision proxy (`possible_false_positive / predicted_positive`) and recall proxy (`predicted_positive / (predicted_positive + possible_false_negative)`).
+- API p95 latency by endpoint category (read/query/write).
+- Provider error budget burn by provider (`1 - success_ratio`) for 15m/1h/24h windows.
+- Scheduler freshness lag (`execution_started_at - next_run_at`) p95 and max.
+- Notification delivery lag (`notification_sent_at - event_created_at`) p95 and max.
+
+## Concrete SLO targets
+
+### Release gate thresholds (deploy-blocking)
+
+A production release is blocked unless **all** of the following are true for the release candidate:
+
+| Gate | Metric source | Threshold |
+| --- | --- | --- |
+| Read-flow latency | `flow=auth_list` k6 smoke | p95 `< 400ms`, p99 `< 700ms`, error rate `< 1%` |
+| Query-flow latency | `flow=rule_poll` k6 smoke | p95 `< 900ms`, p99 `< 1200ms`, error rate `< 1%` |
+| Write-flow latency | `flow=provider_log_write` k6 smoke | p95 `< 700ms`, p99 `< 1000ms`, error rate `< 1%` |
+| Scheduler freshness | `waxwatch_scheduler_lag_seconds` | p95 `< 60s`, max `< 180s` |
+| Queue lag | Celery enqueue-to-start lag | p95 `< 30s`, p99 `< 90s` |
+
+If one gate fails, release remains on hold until remediation or explicit owner sign-off with documented risk acceptance.
+
+### API latency and error SLOs (rolling 28d, per endpoint category)
+- **Read endpoints** (`GET` collection/detail): p95 `< 400ms`, p99 `< 700ms`, 5xx ratio `< 1%`.
+- **Query/search endpoints** (watch/search fan-out): p95 `< 900ms`, p99 `< 1200ms`, 5xx ratio `< 1%`.
+- **Write endpoints** (`POST/PATCH/DELETE`): p95 `< 700ms`, p99 `< 1000ms`, 5xx ratio `< 1%`.
+
+If category labels are not available in metrics, maintain a static route map in dashboard config and aggregate by the mapped category.
+
+### Provider reliability SLO + error budget (rolling 28d, per provider)
+- Success ratio target: `>= 99.0%` for provider calls (`outcome="success"`).
+- Error budget: `<= 1.0%` failed calls per provider over 28d.
+- Fast-burn protection windows:
+  - 1h error ratio `< 3.0%`
+  - 6h error ratio `< 2.0%`
+  - 24h error ratio `< 1.5%`
+
+### Saturation indicators (rolling 10m windows unless noted)
+- **Scheduler lag**: p95 `waxwatch_scheduler_lag_seconds < 60s`; max `< 180s`.
+- **Notification backlog**: `waxwatch_notification_backlog_items{channel="email"} < 500` and `{channel="realtime"} < 1000`.
+- **Queue lag** (Celery enqueue-to-start): p95 `< 30s`, p99 `< 90s` from worker events/dashboard.
+- **DB connection utilization** (`waxwatch_db_connection_utilization`): p95 `< 0.70`, max `< 0.85`.
+
+### Measurable, repeatable acceptance criteria
+A scaling change is accepted only when all checks pass in the same release window:
+1. Two consecutive `make perf-smoke` runs pass without threshold breaches.
+2. Last 24h dashboards satisfy all SLO and saturation thresholds above.
+3. No warning/critical alert fires for scheduler lag, provider fast-burn, or notification backlog during validation.
+4. Evidence is recorded in an ops log entry with links to k6 summary artifact and dashboard snapshots.
+
+### Baseline snapshot template (record for each release candidate)
+
+| Metric | Baseline value | Acceptance threshold |
+| --- | --- | --- |
+| auth_list p95 latency | _fill from k6 summary_ | `< 400ms` |
+| rule_poll p95 latency | _fill from k6 summary_ | `< 900ms` |
+| provider_log_write p95 latency | _fill from k6 summary_ | `< 700ms` |
+| flow error rate (all smoke flows) | _fill from k6 summary_ | `< 1%` |
+| scheduler lag p95 | _fill from dashboard_ | `< 60s` |
+| scheduler lag max | _fill from dashboard_ | `< 180s` |
+| queue lag p95 | _fill from worker dashboard_ | `< 30s` |
+| queue lag p99 | _fill from worker dashboard_ | `< 90s` |
+| notification backlog (email/realtime) | _fill from dashboard_ | `< 500 / < 1000` |
+| db connection utilization p95 | _fill from dashboard_ | `< 0.70` |
+
+### Baseline result record (latest run)
+
+| Run date | Environment | Result | Notes |
+| --- | --- | --- | --- |
+| _TBD by release owner_ | _staging/perf-smoke_ | _pending_ | Attach `k6-summary.json` + scheduler/queue lag screenshots/log extracts. |
+
+### Baseline expectations (for release candidate review)
+
+- **Expectation floor:** first post-change smoke run should remain within 10% of the previous accepted baseline for each latency percentile.
+- **Regression trigger:** any p95/p99 increase greater than 20% (even if still under hard thresholds) requires a follow-up investigation ticket before release.
+- **Minimum evidence set:** attach `k6-summary.json`, scheduler lag snapshot, and queue lag snapshot to the release log entry.
+
+## Performance smoke harness (SLO-gated)
+
+Run the lightweight k6 harness at `scripts/perf/core_flows_smoke.js` to continuously validate core flows against SLO-aligned thresholds:
+
+- **authenticated list endpoints** (`flow=auth_list`):
+  - p95 latency `< 400ms` and p99 `< 700ms`
+  - error rate `< 1%`
+  - check success rate `> 99%`
+- **rule polling task path** (`flow=rule_poll`):
+  - p95 latency `< 900ms` and p99 `< 1200ms`
+  - error rate `< 1%`
+  - check success rate `> 99%`
+- **provider request logging write path** (`flow=provider_log_write`):
+  - p95 latency `< 700ms` and p99 `< 1000ms`
+  - error rate `< 1%`
+  - check success rate `> 99%`
+
+Use `make perf-smoke` for local or staging execution. The command supports either a local `k6` binary or a Docker fallback image and expects `PERF_BASE_URL`, `PERF_BEARER_TOKEN`, and (unless disabled) `PERF_RULE_ID`.
+
+A dedicated GitHub Actions workflow (`.github/workflows/smoke.yml`) runs this suite on demand and on a weekly schedule using environment-scoped configuration (`PERF_BASE_URL` variable, `PERF_BEARER_TOKEN` secret, optional `PERF_RULE_ID` variable). This workflow is intentionally separate from pull-request CI so flaky remote staging dependencies cannot block merges.
+For deploy-blocking verification, run `.github/workflows/release-gates.yml`, which requires scheduler/queue lag inputs and fails the release gate if any latency/error/lag threshold is breached.
+
+GitHub configuration checklist for the `perf-smoke` environment:
+
+1. Open **Settings → Environments → perf-smoke** in the repository (create the environment if missing).
+2. Add environment secret `PERF_BEARER_TOKEN` with a valid bearer token used by smoke requests.
+3. Add environment variable `PERF_BASE_URL` with the deployed API base URL (for example, staging).
+4. Optionally add environment variable `PERF_RULE_ID` when you want to exercise the rule-run smoke path.
+5. (Recommended fallback) add repository variables `PERF_BASE_URL` and optional `PERF_RULE_ID`.
+6. Trigger `.github/workflows/smoke.yml` via **Run workflow**; optionally set `perf_base_url` and/or `perf_rule_id` input overrides.
+7. Runtime resolution order is: `workflow_dispatch` input → `perf-smoke` environment variable → repository variable.
+8. Verify artifacts include:
+   - `artifacts/perf/perf-smoke.log`
+   - `artifacts/perf/k6-summary.json`
+
+Each run publishes `k6-summary.json` and the smoke log as artifacts; use these artifacts to compare p95/error-rate drift week-over-week.
+
+Artifacts are retained for 30 days by default in GitHub Actions so weekly trend comparisons and short incident retrospectives use the same source outputs.
+
+### Results cadence and ownership
+
+- **Pre-release gate**: Release owner runs `make perf-smoke` before each production release candidate.
+- **Post-change validation**: DB/platform owner runs `make perf-smoke` after major schema/index changes.
+- **Ongoing operations cadence**: Primary on-call (or delegated service owner) runs the smoke suite weekly in staging and records results in the team ops log.
+- **Escalation policy**: Any threshold breach blocks release until triaged and either remediated or explicitly accepted with owner sign-off.
+
+### Expected response when smoke SLO thresholds fail
+
+- **Owner on point:** Primary on-call for the service in the week of the failure (or explicitly delegated service owner).
+- **Time to acknowledge:** within 1 business hour for weekday scheduled runs, or before next release cut for manually triggered pre-release runs.
+- **Initial response checklist:**
+  1. Download workflow artifacts (`k6-summary.json`, smoke log) and identify which flow breached thresholds.
+  2. Correlate to dashboards/alerts for read/query/write latency and provider health.
+  3. Re-run `make perf-smoke` once to rule out transient remote noise.
+  4. Open an ops log entry with owner, suspected cause, and remediation ETA.
+- **Escalation:** If a second consecutive run breaches the same threshold, start an incident channel and apply release hold until remediation or explicit owner sign-off.
+
+## Suggested alert rules
+
+1. **API elevated latency (warning/critical by endpoint category)**
+   - Read endpoints: p95 `> 500ms` for 10m (warning), `> 800ms` for 10m (critical).
+   - Query/search endpoints: p95 `> 1.1s` for 10m (warning), `> 1.5s` for 10m (critical).
+   - Write endpoints: p95 `> 850ms` for 10m (warning), `> 1.2s` for 10m (critical).
+
+2. **API elevated 5xx rate (warning/critical)**
+   - `5xx_count / total_count > 0.02` for 10m (warning).
+   - `5xx_count / total_count > 0.05` for 10m (critical).
+
+3. **Provider degradation / error-budget burn (warning/critical per provider)**
+   - Error ratio `> 0.03` for 1h (warning; burns 3x 28d budget).
+   - Error ratio `> 0.05` for 1h (critical; burns 5x 28d budget).
+   - Error ratio `> 0.02` for 6h (warning).
+   - Error ratio `> 0.03` for 6h (critical).
+
+4. **Scheduler instability (critical)**
+   - Scheduler run failures observed for 3 consecutive intervals, or
+   - Rule failure ratio `> 0.25` for 15m.
+
+5. **No scheduler activity (critical)**
+   - `increase(waxwatch_scheduler_runs_total[15m]) == 0`.
+
+6. **Scheduler freshness breach (warning/critical)**
+   - p95 freshness lag `> 60s` for 10m (warning).
+   - max freshness lag `> 180s` for 10m (critical).
+
+7. **Notification delivery lag breach (warning/critical)**
+   - p95 delivery lag `> 45s` for 10m (warning).
+   - p99 delivery lag `> 120s` for 10m (critical).
+
+## Runbook notes
+
+### Failure class: API latency spike
+1. Check API dashboard (top endpoints by p95).
+2. Determine whether SLO breach is read/query/write category specific.
+3. Correlate with dependency readiness (`/readyz`), especially DB and Redis for worker-driven features.
+4. Compare current 10m performance against 28d SLO trend to estimate budget burn rate.
+5. If category p95 exceeds critical threshold for >10m, page on-call and start incident channel.
+6. Inspect logs for matching `request_id` and slow-path routes.
+7. Mitigate:
+   - lower fan-out/providers on heavy queries,
+   - scale API workers,
+   - reduce expensive query limits.
+8. Exit criteria: category p95 back under SLO target for 30m and 5xx ratio < 1%.
+
+### Failure class: Provider outage / throttling
+1. Identify impacted provider via error ratio and status-code spikes.
+2. Inspect provider-specific metadata in persisted provider request logs.
+3. Confirm retries/backoff behavior and upstream rate-limit headers.
+5. Mitigate:
+   - temporary provider disablement (if supported),
+   - reduce polling/search frequency,
+   - contact provider support for sustained 5xx/429 rates.
+5. Track remaining 28d error budget for the provider; if >50% consumed, require feature-owner sign-off before re-enabling full traffic.
+6. Exit criteria: provider error ratio below 1.5% for 24h window and below 3% for 1h window.
+
+### Failure class: Scheduler failure loop
+1. Check scheduler run and rule outcome counters.
+2. Inspect worker logs for exception type and impacted `rule_id`.
+3. Validate database connectivity and queue health.
+5. Mitigate:
+   - restart scheduler worker,
+   - pause problematic rules,
+   - temporarily increase poll interval to reduce load.
+5. Measure freshness lag while recovering; if max lag approaches 180s, temporarily shed non-critical rules.
+6. Exit criteria: p95 freshness lag < 60s and max lag < 180s for 30m.
+
+### Failure class: Notification backlog / delivery lag
+1. Check notification lag dashboard (p95/p99 and queue depth).
+2. Confirm downstream provider/channel health (email/push/webhook).
+3. Check policy deferral volume (quiet-hours and delivery-frequency) before treating lag as provider/worker regression.
+4. Inspect worker concurrency, retry queues, and dead-letter volumes.
+5. Mitigate:
+   - increase notification worker concurrency,
+   - prioritize high-severity notifications,
+   - temporarily pause low-priority digests/batches.
+6. Exit criteria: p95 lag < 45s and p99 lag < 120s for 30m.
+
+### Failure class: Error burst in Sentry
+1. Group by issue fingerprint and release/environment.
+2. Use `request_id` tag to correlate a Sentry event with API logs.
+3. Roll back recent deploy if API or provider error budget burn indicates likely 28d SLO violation.
+4. Add/adjust alert thresholds if noise from known transient failures.
+
+## Operations checklist (SLO-aligned)
+
+- [ ] Dashboards show SLO status for API latency, provider error budgets, scheduler freshness, and notification lag.
+- [ ] Alert thresholds configured exactly to warning/critical values listed above.
+- [ ] On-call paging policy wired to all critical alerts.
+- [ ] Runbook links embedded in each alert with the matching failure class section.
+- [ ] Weekly review includes 28d API/provider budget consumption and 7d scheduler/notification lag compliance.
+
+## Security scanning triage and exception process
+
+The repository now runs dedicated security workflows for CodeQL, dependency auditing (`pip-audit`), and secrets scanning (Gitleaks). Use the process below whenever one of these workflows fails:
+
+1. **Triage and validate**
+   - Confirm the alert is reproducible on the current PR head.
+   - Identify severity and exploitability in our runtime context (production-facing path, privileged path, test-only/dev-only).
+   - For dependency findings, verify whether a vulnerable package is actually imported/reachable in app code.
+
+2. **Remediate by default**
+   - Prefer upgrading, replacing, or removing affected dependencies/secrets patterns.
+   - For leaked secret findings, rotate the credential first, then remove and invalidate historical exposure where possible.
+   - For code findings, patch the vulnerable path and add regression coverage when practical.
+
+3. **Exception handling (time-bound only)**
+   - If immediate remediation is not possible, open a tracked exception entry in the PR description and issue tracker with:
+     - finding identifier/tool,
+     - risk rationale,
+     - compensating controls,
+     - owner,
+     - expiration/review date.
+   - Exceptions must be approved by a maintainer and reviewed at least weekly until closed.
+
+4. **Closure criteria**
+   - Workflow returns to green on the branch/PR.
+   - Linked exception (if any) is closed or renewed with explicit maintainer approval.
+   - Post-incident notes are added to the ops log for medium/high findings.
+
+
+### Notification delivery dispatch reliability
+
+- Notification delivery tasks are enqueued only after successful DB commit to avoid orphaned deliveries on rollback.
+- When post-commit enqueue fails, the app logs `notifications.delivery.enqueue_failed` with `notification_id` and retry metadata and keeps failed dispatches queued on the active SQLAlchemy session for retry on the next commit boundary.
+- Delivery workers log `notifications.delivery.notification_not_found` with `likely_race=true` to flag potential commit/worker ordering races or stale task execution.

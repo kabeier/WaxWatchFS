@@ -1,0 +1,194 @@
+name: CI
+
+# Governance note: rate-limit scoped auth-required pre-auth keying uses shared anon/hybrid principals to avoid bearer spray budget sharding.
+
+# Governance note: notification delivery dispatch is post-commit; task orchestration changes require synced governance/docs/changelog updates.
+# Governance note: notification preference get-or-create paths are concurrency-sensitive; keep race-regression coverage and governance/docs/changelog sync updates together.
+
+# Policy sync marker: migration tests may validate SQL NULL vs JSONB null semantics for scope lifecycle fields.
+# Policy sync marker: migration scope normalization CTE/test updates must keep governance artifacts synchronized.
+# Policy sync marker: token lifecycle migration test-path edits must be synchronized with governance artifacts.
+# Policy sync reminder: migration test-path updates must keep governance files/docs/changelog aligned.
+# Governance note: provider registry safety gate keeps mock default provider usage to dev/test/local; sync docs/governance when changing this behavior.
+# Governance note: keep this workflow synchronized with Makefile/docs/CHANGELOG (`.env.sample` only for env var additions/removals/default changes)
+# when integration surfaces (including token lifecycle schema/service changes) are updated.
+# Provider telemetry note: retry/request metadata should use explicit attempt fields (`attempt`, `attempts_total`) with `max_attempts` alias compatibility.
+# Readiness governance note: DB probe compatibility hardening (dialect fallback and missing begin()/in_transaction() guards) requires synced updates across Makefile/docs/CHANGELOG, and `.env.sample` only when env vars/defaults change.
+# Readiness test-governance note: `/readyz` DB probe regression-test updates require synchronized policy files/docs/changelog changes.
+# Readiness timeout policy note: DB probe timeout enforcement changes must keep governance/docs/changelog artifacts synchronized.
+# Provider request summary policy note: changes to error aggregation (HTTP status failures + transport error rows) require synchronized governance/docs/changelog updates.
+# eBay auth policy note: OAuth token-response logging semantics (including missing access_token error paths) require synchronized governance/docs/changelog updates.
+# Scheduler claim policy note: due-rule SKIP LOCKED/row-claim behavior and scheduler concurrency tests require synchronized governance/docs/changelog updates.
+# Release-match dedupe policy note: watch-release NEW_MATCH idempotency/concurrency hardening must keep governance/docs/changelog artifacts synchronized.
+# Rate-limit contract note: scoped dependencies with require_authenticated_principal=true must still
+# apply scoped throttling to anonymous callers (anon:<client>) and remain covered by tests/test_rate_limit.py.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+  schedule:
+    # Weekly Monday maintenance/governance/dependency-smoke run.
+    - cron: "0 6 * * 1"
+
+# Note: security workflows are intentionally split into dedicated pipelines:
+# - .github/workflows/security.yml (CodeQL)
+# - .github/workflows/dependency-audit.yml (pip-audit)
+#   Keep pip-audit pin governance aligned with Makefile PIP_AUDIT_VERSION and changelog/docs updates.
+# - .github/workflows/secrets-scan.yml (Gitleaks)
+#   Runs on pull requests and every direct push to main (no path allowlist) for full secret coverage.
+# - .github/workflows/smoke.yml (environment-scoped remote perf smoke, non-blocking for PR merges)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python CI environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.12"
+
+      - name: Run required static/policy CI targets
+        # Required policy: every branch must pass this static/policy gate before review and PR merge.
+        # Policy-sync guard: Settings/workflow surface changes (e.g., RATE_LIMIT_* knobs)
+        # must update governance docs/files in the same PR, including synced governance files and health/metrics contract docs + tests.
+        # Structured logging contract changes are included in this policy-sync requirement.
+        # Readiness probe DB timeout/threading behavior changes are also policy-sync-governed.
+        # Perf workflow action version/pin rotations are policy-sync-governed as well.
+        # Discogs import in-flight uniqueness/cooldown concurrency hardening changes are policy-sync-governed as well.
+        run: |
+          make verify-test-deps
+          make check-docker-config
+          make check-policy-sync
+          make check-contract-sync
+          make check-openapi-snapshot
+          make lint
+          make fmt-check
+          make typecheck
+
+  db-tests:
+    runs-on: ubuntu-latest
+    needs: static-checks
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python CI environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.12"
+
+      - name: Print CI provenance (debug)
+        run: |
+          git rev-parse HEAD
+          git show --name-only --oneline -n 1
+          sed -n '1,120p' tests/test_celery_redis_integration.py
+
+      - name: Verify Celery integration test guardrails (debug)
+        run: |
+          set -euo pipefail
+          test_file="tests/test_celery_redis_integration.py"
+          if ! grep -q "RUN_CELERY_REDIS_INTEGRATION" "$test_file" \
+            || ! grep -Eq "@pytest.mark.integration|pytest\.mark\.integration" "$test_file" \
+            || ! grep -Eq "skipif|pytest\.skip" "$test_file"; then
+            echo "Celery integration guardrails missing from $test_file"
+            echo "Expected: RUN_CELERY_REDIS_INTEGRATION + integration marker + skipif/skip guard"
+            sed -n '1,80p' "$test_file"
+            exit 1
+          fi
+
+      # DB CI target includes integration coverage for migrations/service changes (for example token lifecycle normalization).
+      # Discogs queue-dispatch regression behavior is covered by DB CI pytest discovery (tests/test_discogs_integration_router.py).
+      - name: Run targeted rate-limit regression tests
+        run: |
+          set -euo pipefail
+          trap 'docker compose -f docker-compose.test.yml down >/dev/null 2>&1 || true' EXIT
+          docker compose -f docker-compose.test.yml up -d postgres
+          make wait-test-db
+          docker compose -f docker-compose.test.yml run --rm             -e DATABASE_URL=postgresql+psycopg://waxwatch:waxwatch@postgres:5432/waxwatch_test             -e TOKEN_CRYPTO_LOCAL_KEY=${TOKEN_CRYPTO_LOCAL_KEY:-5pq6kEUS_UIk1_4qatN-Lx42s3e362VNq5CgyI4LAZU=}             api-test "alembic upgrade heads"
+          docker compose -f docker-compose.test.yml run --rm             -e DATABASE_URL=postgresql+psycopg://waxwatch:waxwatch@postgres:5432/waxwatch_test             -e TOKEN_CRYPTO_LOCAL_KEY=${TOKEN_CRYPTO_LOCAL_KEY:-5pq6kEUS_UIk1_4qatN-Lx42s3e362VNq5CgyI4LAZU=}             api-test "timeout 240s pytest --no-cov -vv -s --maxfail=1 tests/test_rate_limit.py"
+
+      - name: Run DB CI target
+        env:
+          COVERAGE_FAIL_UNDER: "85"
+        run: make ci-db-tests COVERAGE_FAIL_UNDER=$COVERAGE_FAIL_UNDER
+
+      - name: Compare PR coverage against base branch
+        if: github.event_name == 'pull_request'
+        env:
+          COVERAGE_FAIL_UNDER: "85"
+        run: |
+          set -euo pipefail
+
+          test -f coverage.json
+          mv coverage.json coverage.pr.json
+
+          git fetch --no-tags --prune --depth=1 origin "${{ github.base_ref }}"
+          BASE_SHA="$(git rev-parse FETCH_HEAD)"
+          PR_SHA="${GITHUB_SHA}"
+
+          git checkout --force "$BASE_SHA"
+          # Base branches may not include Celery smoke isolation yet. Run a minimal
+          # DB coverage pass here and explicitly ignore worker-dependent integration tests.
+          trap 'docker compose -f docker-compose.test.yml down >/dev/null 2>&1 || true' EXIT
+          docker compose -f docker-compose.test.yml up -d postgres redis
+          make wait-test-db
+          for _ in $(seq 1 60); do
+            if docker compose -f docker-compose.test.yml exec -T redis redis-cli ping >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker compose -f docker-compose.test.yml run --rm             -e DATABASE_URL=postgresql+psycopg://waxwatch:waxwatch@postgres:5432/waxwatch_test             -e TOKEN_CRYPTO_LOCAL_KEY=${TOKEN_CRYPTO_LOCAL_KEY:-5pq6kEUS_UIk1_4qatN-Lx42s3e362VNq5CgyI4LAZU=}             -e COVERAGE_FILE=/tmp/.coverage             api-test "alembic upgrade heads"
+          docker compose -f docker-compose.test.yml run --rm             -e DATABASE_URL=postgresql+psycopg://waxwatch:waxwatch@postgres:5432/waxwatch_test             -e TOKEN_CRYPTO_LOCAL_KEY=${TOKEN_CRYPTO_LOCAL_KEY:-5pq6kEUS_UIk1_4qatN-Lx42s3e362VNq5CgyI4LAZU=}             -e COVERAGE_FILE=/tmp/.coverage             api-test "python -m scripts.schema_drift_check"
+          BASE_COVERAGE_READY=1
+          if ! docker compose -f docker-compose.test.yml run --rm             -e DATABASE_URL=postgresql+psycopg://waxwatch:waxwatch@postgres:5432/waxwatch_test             -e TOKEN_CRYPTO_LOCAL_KEY=${TOKEN_CRYPTO_LOCAL_KEY:-5pq6kEUS_UIk1_4qatN-Lx42s3e362VNq5CgyI4LAZU=}             -e COVERAGE_FILE=/tmp/.coverage             api-test "pytest -q --disable-warnings --maxfail=1 --cov-fail-under=$COVERAGE_FAIL_UNDER --ignore=tests/test_celery_redis_integration.py"; then
+            echo "warning: base revision failed DB pytest pass; skipping coverage regression comparison for this run"
+            BASE_COVERAGE_READY=0
+          fi
+
+          if [ "$BASE_COVERAGE_READY" -eq 1 ] && [ -f coverage.json ]; then
+            mv coverage.json coverage.base.json
+          fi
+          docker compose -f docker-compose.test.yml down >/dev/null 2>&1 || true
+          trap - EXIT
+
+          git checkout --force "$PR_SHA"
+          mv coverage.pr.json coverage.json
+
+          if [ -f coverage.base.json ]; then
+            python scripts/check_coverage_regression.py
+          else
+            echo "warning: coverage regression comparison skipped because base revision baseline coverage was unavailable"
+          fi
+
+      - name: Verify perf smoke/release gate harness files
+        run: |
+          test -f scripts/perf/core_flows_smoke.js
+          test -f scripts/perf/verify_release_gates.py
+          test -f scripts/perf/README.md
+          test -f .github/workflows/smoke.yml
+          test -f .github/workflows/release-gates.yml
+          grep -q "perf_base_url:" .github/workflows/smoke.yml
+          grep -q "perf_rule_id:" .github/workflows/smoke.yml
+          grep -q "PERF_BASE_URL source:" .github/workflows/smoke.yml
+          grep -q "scheduler_lag_p95_seconds:" .github/workflows/release-gates.yml
+          grep -q "queue_lag_p99_seconds:" .github/workflows/release-gates.yml
