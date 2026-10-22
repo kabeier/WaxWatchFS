@@ -112,27 +112,30 @@ Deploy-blocking release validation uses `.github/workflows/backend-release-gates
 - `make ci-db-tests` remains the database-backed test segment used by `ci-local` and must keep migration + drift + full pytest discovery with coverage.
 - Focused targets (for example `make test-matching`, `make test-token-security`) are local debugging helpers only and are non-authoritative for CI pass/fail.
 
-## Pre-commit hooks
+## Git hooks
 
-This repository ships pre-commit configuration in `.pre-commit-config.yaml`.
+Git hooks for the whole WaxWatchFS monorepo live in the repo-root `.husky/` folder and are managed by husky (installed with the frontend's npm dependencies). They run backend checks only when `backend/` files are involved, using `backend/.venv` or `backend/venv` when present.
 
-Install hooks locally:
+Install hooks locally (either works):
 
 ```bash
-make pre-commit-install
+make pre-commit-install          # from backend/
+npm --prefix ../frontend install # husky installs the hooks via the frontend "prepare" script
 ```
 
 The configured hooks are:
 
-- **pre-commit**: `ruff`, `ruff-format`, `mypy`
-- **pre-push**: `make ci-local` (full CI-equivalent suite)
+- **pre-commit** (when `backend/` files are staged): `make lint fmt-check typecheck` (ruff, ruff format check, mypy)
+- **pre-push** (when pushed commits touch `backend/`): `make ci-local` (full CI-equivalent suite; needs Docker)
 
-You can run hooks on demand:
+You can run the same checks on demand:
 
 ```bash
-pre-commit run --all-files
-pre-commit run --hook-stage pre-push --all-files
+make lint fmt-check typecheck
+make ci-local
 ```
+
+Skip hooks once with `HUSKY=0 git commit ...` / `HUSKY=0 git push ...`.
 
 Following this workflow ensures your branch meets the same lint, formatting, typing, migration, and coverage gates that run in CI.
 
@@ -172,7 +175,7 @@ make lint
 make fmt-check
 ```
 
-For stronger local enforcement on every branch, run `make pre-commit-install` so pre-commit/pre-push hooks run `ruff check .` and `ruff format --check .` automatically.
+For stronger local enforcement on every branch, run `make pre-commit-install` so the husky pre-commit/pre-push hooks run `ruff check .` and `ruff format --check .` automatically.
 
 
 ## GitHub Actions pinning policy

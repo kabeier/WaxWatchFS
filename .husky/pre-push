@@ -1,0 +1,19 @@
+# Monorepo pre-push: run the backend's full local CI gate (make ci-local) when the
+# commits being pushed touch backend/. Requires Docker. Skip once with `HUSKY=0 git push ...`.
+
+zero=0000000000000000000000000000000000000000
+backend_changed=
+
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # branch deletion
+  # Commits in this push that no remote has yet.
+  if git log --format= --name-only "$local_sha" --not --remotes | grep -q '^backend/'; then
+    backend_changed=1
+  fi
+done
+
+if [ -n "$backend_changed" ]; then
+  echo "husky - backend: make ci-local"
+  . "$(dirname "$0")/backend-path.sh"
+  (cd backend && make ci-local)
+fi

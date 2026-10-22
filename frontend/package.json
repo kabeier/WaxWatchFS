@@ -13,7 +13,7 @@
     "format": "prettier . --write",
     "format:check": "prettier . --check",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx --max-warnings 0",
-    "prepare": "husky",
+    "prepare": "cd .. && husky",
     "start": "node scripts/start-standalone.mjs",
     "test": "vitest",
     "test:run": "vitest run",

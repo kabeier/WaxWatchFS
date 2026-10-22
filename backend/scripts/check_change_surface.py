@@ -19,7 +19,7 @@ TRIGGER_GLOBS: dict[str, tuple[str, ...]] = {
     "CI config": (
         "../.github/workflows/backend-*",
         "../.github/actions/setup-python-env/**",
-        ".pre-commit-config.yaml",
+        "../.husky/*",
     ),
     "task orchestration": (
         "Makefile",

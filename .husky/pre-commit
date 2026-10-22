@@ -1,0 +1,16 @@
+# Monorepo pre-commit: run each project's checks only when its files are staged.
+# Hooks are installed by `npm install` in frontend/ (its "prepare" script runs husky from the repo root).
+# Skip once with `HUSKY=0 git commit ...`.
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+if printf '%s\n' "$staged" | grep -q '^frontend/'; then
+  echo "husky - frontend: lint-staged"
+  (cd frontend && npx lint-staged)
+fi
+
+if printf '%s\n' "$staged" | grep -q '^backend/'; then
+  echo "husky - backend: ruff, ruff format --check, mypy"
+  . "$(dirname "$0")/backend-path.sh"
+  (cd backend && make -s lint fmt-check typecheck)
+fi

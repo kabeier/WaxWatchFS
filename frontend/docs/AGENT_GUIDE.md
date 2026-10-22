@@ -27,7 +27,7 @@ This document is the “rules of engagement” for human contributors and code a
 8. **Formatting is mandatory for every PR**
    - Run `npm run format` (or targeted `npx prettier --write ...`) before committing.
    - Verify with `npm run format:check` (and `npm run format:check:changed` in CI contexts).
-   - `git commit` also runs `.husky/pre-commit` with `lint-staged`; do not bypass it for agent-authored changes.
+   - `git commit` also runs the repo-root `.husky/pre-commit`, which runs `lint-staged` here when `frontend/` files are staged; do not bypass it for agent-authored changes.
    - **All AI/code agents must Prettier-format PR changes before submission.**
 
 ## Required reading before implementation

@@ -93,7 +93,7 @@ help:
 	@echo "  make fmt                   Auto-format code"
 	@echo "  make fmt-check             Fail if formatting differs"
 	@echo "  make typecheck             Run mypy static type checks"
-	@echo "  make pre-commit-install    Install pre-commit hooks (pre-commit + pre-push)"
+	@echo "  make pre-commit-install    Install monorepo git hooks (husky: pre-commit + pre-push)"
 	@echo "  make lock-refresh          Rebuild requirements*.txt from requirements*.in using Python 3.12"
 	@echo "  make check-lock-python-version Fail if lockfiles were not generated with Python 3.12"
 	@echo ""
@@ -193,8 +193,8 @@ typecheck:
 	mypy app scripts tests
 
 pre-commit-install:
-	pre-commit install
-	pre-commit install --hook-type pre-push
+	@# Git hooks for the whole monorepo live in ../.husky and are managed by husky from ../frontend.
+	cd .. && npm --prefix frontend exec --no -- husky
 
 perf-smoke:
 	@# SLO gate: scripts/perf/core_flows_smoke.js fails on p95/p99/error/check-rate threshold breaches.
