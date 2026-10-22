@@ -19,3 +19,8 @@ warn_redundant_casts = true
 show_error_codes = true
 pretty = true
 disable_error_code = ["override", "arg-type", "prop-decorator", "return-value", "call-arg"]
+
+[tool.coverage.run]
+# Record file paths relative to backend/ so per-shard coverage data files written inside the
+# api-test container (/app) can be combined on the CI runner (`make ci-coverage-combine`).
+relative_files = true

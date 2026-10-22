@@ -22,6 +22,9 @@ name: Backend CI
 # Release-match dedupe policy note: watch-release NEW_MATCH idempotency/concurrency hardening must keep governance/docs/changelog artifacts synchronized.
 # Local hook parity note: repo-root .husky/pre-commit runs `make lint fmt-check typecheck` for staged backend/ files and
 # .husky/pre-push runs `make ci-local` (stops at the first failing segment); keep them aligned with the jobs below.
+# Sharding note: DB tests run as a `db-tests-shard` matrix (PYTEST_SHARD_INDEX/PYTEST_SHARD_TOTAL, see tests/conftest.py);
+# the `db-tests` job aggregates the shards (stable required-check name), combines coverage via
+# `make ci-coverage-combine`, enforces the 85% floor on the merged data, and runs the PR coverage-regression check.
 # Rate-limit contract note: scoped dependencies with require_authenticated_principal=true must still
 # apply scoped throttling to anonymous callers (anon:<client>) and remain covered by tests/test_rate_limit.py.
 
@@ -95,28 +98,37 @@ jobs:
           make fmt-check
           make typecheck
 
-  db-tests:
+  # DB-backed pytest suite, split into parallel shards. tests/conftest.py assigns whole test files to
+  # shards deterministically (PYTEST_SHARD_INDEX/PYTEST_SHARD_TOTAL); each shard runs the full
+  # `make ci-db-tests` flow (migrations + schema drift + its slice of pytest) with the per-shard coverage
+  # floor disabled, and uploads its coverage data file. The 85% floor is enforced on the COMBINED data
+  # by the aggregate `db-tests` job below. Keep `strategy.matrix.shard` and PYTEST_SHARD_TOTAL in sync.
+  db-tests-shard:
+    name: db-tests-shard (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     needs: static-checks
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      PYTEST_SHARD_TOTAL: "3"
 
     steps:
       - name: Checkout
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
-        with:
-          fetch-depth: 0
 
-      - name: Setup Python CI environment
-        uses: ./.github/actions/setup-python-env
-        with:
-          python-version: "3.12"
-
+      # Shards only drive Docker Compose (tests run inside the api-test image), so they skip the host
+      # Python setup; `static-checks` already verified lockfiles and installed/typechecked the project.
       - name: Print CI provenance (debug)
+        if: matrix.shard == 1
         run: |
           git rev-parse HEAD
           git show --name-only --oneline -n 1
           sed -n '1,120p' tests/test_celery_redis_integration.py
 
       - name: Verify Celery integration test guardrails (debug)
+        if: matrix.shard == 1
         run: |
           set -euo pipefail
           test_file="tests/test_celery_redis_integration.py"
@@ -131,7 +143,10 @@ jobs:
 
       # DB CI target includes integration coverage for migrations/service changes (for example token lifecycle normalization).
       # Discogs queue-dispatch regression behavior is covered by DB CI pytest discovery (tests/test_discogs_integration_router.py).
+      # Fast-fail targeted rate-limit regression run (verbose, no coverage); it lives on the last shard,
+      # which the file balancer tends to leave lightest. The full suite still covers tests/test_rate_limit.py.
       - name: Run targeted rate-limit regression tests
+        if: matrix.shard == 3
         run: |
           set -euo pipefail
           trap 'docker compose -f docker-compose.test.yml down >/dev/null 2>&1 || true' EXIT
@@ -140,24 +155,67 @@ jobs:
           docker compose -f docker-compose.test.yml run --rm             -e DATABASE_URL=postgresql+psycopg://waxwatch:waxwatch@postgres:5432/waxwatch_test             -e TOKEN_CRYPTO_LOCAL_KEY=${TOKEN_CRYPTO_LOCAL_KEY:-5pq6kEUS_UIk1_4qatN-Lx42s3e362VNq5CgyI4LAZU=}             api-test "alembic upgrade heads"
           docker compose -f docker-compose.test.yml run --rm             -e DATABASE_URL=postgresql+psycopg://waxwatch:waxwatch@postgres:5432/waxwatch_test             -e TOKEN_CRYPTO_LOCAL_KEY=${TOKEN_CRYPTO_LOCAL_KEY:-5pq6kEUS_UIk1_4qatN-Lx42s3e362VNq5CgyI4LAZU=}             api-test "timeout 240s pytest --no-cov -vv -s --maxfail=1 tests/test_rate_limit.py"
 
-      - name: Run DB CI target
+      - name: Run DB CI target (shard ${{ matrix.shard }}/3)
         env:
-          COVERAGE_FAIL_UNDER: "85"
-        run: make ci-db-tests COVERAGE_FAIL_UNDER=$COVERAGE_FAIL_UNDER
-
-      - name: Compare PR coverage against base branch
-        if: github.event_name == 'pull_request'
-        env:
-          COVERAGE_FAIL_UNDER: "85"
+          PYTEST_SHARD_INDEX: ${{ matrix.shard }}
         run: |
           set -euo pipefail
+          mkdir -p coverage-shards
+          make ci-db-tests \
+            COVERAGE_FAIL_UNDER=0 \
+            PYTEST_SHARD_INDEX="$PYTEST_SHARD_INDEX" \
+            PYTEST_SHARD_TOTAL="$PYTEST_SHARD_TOTAL" \
+            CI_COVERAGE_FILE="/app/coverage-shards/shard-${PYTEST_SHARD_INDEX}.coverage"
+          test -s "coverage-shards/shard-${PYTEST_SHARD_INDEX}.coverage"
 
-          test -f coverage.json
-          mv coverage.json coverage.pr.json
+      - name: Upload shard coverage data
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: backend-coverage-shard-${{ matrix.shard }}
+          # Artifact paths are workspace-relative (not affected by defaults.run.working-directory).
+          path: backend/coverage-shards/shard-${{ matrix.shard }}.coverage
+          if-no-files-found: error
+          retention-days: 1
 
+  # PR-only coverage baseline for scripts/check_coverage_regression.py. Runs in parallel with the
+  # PR suite (it only depends on the base revision). The baseline is keyed by the base revision's
+  # backend/ tree hash: push-to-main runs of this workflow cache their combined coverage.json under the
+  # same key, so most PRs restore it instead of re-running the base suite. On a cache miss the base
+  # suite is re-run here (unsharded, since older base revisions may predate shard support).
+  base-coverage:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.publish.outputs.available }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Resolve base revision
+        id: base
+        run: |
+          set -euo pipefail
           git fetch --no-tags --prune --depth=1 origin "${{ github.base_ref }}"
-          BASE_SHA="$(git rev-parse FETCH_HEAD)"
-          PR_SHA="${GITHUB_SHA}"
+          echo "sha=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tree=$(git rev-parse FETCH_HEAD:backend)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached base coverage baseline
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: backend/coverage-cache/coverage.json
+          key: backend-coverage-json-${{ steps.base.outputs.tree }}
+
+      - name: Generate base-branch coverage baseline (cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          COVERAGE_FAIL_UNDER: "85"
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          set -euo pipefail
 
           git checkout --force "$BASE_SHA"
           # Base branches may not include Celery smoke isolation yet. Run a minimal
@@ -180,19 +238,129 @@ jobs:
           fi
 
           if [ "$BASE_COVERAGE_READY" -eq 1 ] && [ -f coverage.json ]; then
-            mv coverage.json coverage.base.json
+            mkdir -p coverage-cache
+            cp coverage.json coverage-cache/coverage.json
           fi
-          docker compose -f docker-compose.test.yml down >/dev/null 2>&1 || true
-          trap - EXIT
 
-          git checkout --force "$PR_SHA"
-          mv coverage.pr.json coverage.json
+      - name: Cache base coverage baseline
+        if: steps.cache.outputs.cache-hit != 'true' && hashFiles('backend/coverage-cache/coverage.json') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: backend/coverage-cache/coverage.json
+          key: backend-coverage-json-${{ steps.base.outputs.tree }}
 
+      - name: Publish base coverage baseline
+        id: publish
+        run: |
+          if [ -f coverage-cache/coverage.json ]; then
+            cp coverage-cache/coverage.json coverage.base.json
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "warning: coverage regression comparison will be skipped because base revision baseline coverage was unavailable"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload base coverage baseline
+        if: steps.publish.outputs.available == 'true'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: backend-coverage-base
+          path: backend/coverage.base.json
+          if-no-files-found: error
+          retention-days: 1
+
+  # Aggregate required check (stable name for branch protection): fails unless static-checks and every
+  # DB shard passed, then combines shard coverage, enforces the 85% floor on the merged result, and runs
+  # the PR coverage-regression comparison against the base-branch baseline.
+  db-tests:
+    runs-on: ubuntu-latest
+    needs: [static-checks, db-tests-shard, base-coverage]
+    if: ${{ !cancelled() }}
+
+    steps:
+      - name: Require static checks, all DB shards, and the base baseline job to succeed
+        working-directory: .
+        env:
+          STATIC_RESULT: ${{ needs.static-checks.result }}
+          SHARDS_RESULT: ${{ needs.db-tests-shard.result }}
+          BASE_RESULT: ${{ needs.base-coverage.result }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          echo "static-checks=$STATIC_RESULT db-tests-shard=$SHARDS_RESULT base-coverage=$BASE_RESULT"
+          test "$STATIC_RESULT" = "success"
+          test "$SHARDS_RESULT" = "success"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            test "$BASE_RESULT" = "success"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
+
+      - name: Use Python
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned coverage tooling
+        # Only coverage.py is needed to combine/report; use the exact lockfile pin so data files match.
+        run: |
+          set -euo pipefail
+          coverage_pin="$(grep -E '^coverage(\[toml\])?==' requirements-dev.txt)"
+          python -m pip install "$coverage_pin"
+
+      - name: Download shard coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: backend-coverage-shard-*
+          path: backend/coverage-shards
+          merge-multiple: true
+
+      - name: Combine shard coverage and enforce coverage floor
+        env:
+          COVERAGE_FAIL_UNDER: "85"
+        run: |
+          set -euo pipefail
+          shard_files=(coverage-shards/*.coverage)
+          if [ "${#shard_files[@]}" -ne 3 ]; then
+            echo "Expected 3 shard coverage files, found ${#shard_files[@]}: ${shard_files[*]}"
+            exit 1
+          fi
+          make ci-coverage-combine COVERAGE_FAIL_UNDER="$COVERAGE_FAIL_UNDER"
+          test -f coverage.json
+
+      - name: Download base coverage baseline
+        if: github.event_name == 'pull_request' && needs.base-coverage.outputs.available == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: backend-coverage-base
+          path: backend
+
+      - name: Compare PR coverage against base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
           if [ -f coverage.base.json ]; then
             python scripts/check_coverage_regression.py
           else
             echo "warning: coverage regression comparison skipped because base revision baseline coverage was unavailable"
           fi
+
+      # Seeds the base-coverage cache for future PRs (keyed by this revision's backend/ tree hash).
+      - name: Prepare coverage baseline for caching (main)
+        id: baseline
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          mkdir -p coverage-cache
+          cp coverage.json coverage-cache/coverage.json
+          echo "tree=$(git rev-parse HEAD:backend)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache coverage baseline (main)
+        if: steps.baseline.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: backend/coverage-cache/coverage.json
+          key: backend-coverage-json-${{ steps.baseline.outputs.tree }}
 
       - name: Verify perf smoke/release gate harness files
         run: |

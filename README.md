@@ -44,11 +44,11 @@ Workflows live in [`.github/workflows/`](.github/workflows/) and are path-filter
 
 | Workflow | Runs on |
 | --- | --- |
-| `backend-ci.yml` | `backend/**` changes: static/policy checks, then DB-backed tests with coverage |
+| `backend-ci.yml` | `backend/**` changes: static/policy checks, then DB-backed tests in parallel shards with combined coverage (`db-tests` aggregates) |
 | `backend-security.yml` | CodeQL for Python |
 | `backend-dependency-audit.yml` | `pip-audit` on requirements changes and weekly |
 | `backend-smoke.yml`, `backend-release-gates.yml` | Manual or scheduled k6 performance smoke and release gates |
-| `frontend-ci.yml` | `frontend/**` changes: typecheck, lint, unit, build, e2e, a11y |
+| `frontend-ci.yml` | `frontend/**` changes: parallel checks (typecheck, lint, contracts), unit tests, and build + e2e + a11y jobs (`build-and-test` aggregates) |
 | `secrets-scan.yml` | Every push and PR, whole repo (Gitleaks) |
 
 Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) covers pip in `backend/`, npm in `frontend/`, and GitHub Actions.

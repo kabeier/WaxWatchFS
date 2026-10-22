@@ -15,32 +15,37 @@ defaults:
   run:
     working-directory: frontend
 
+# Shared by every job (build-time env contract, runtime server config for e2e/a11y/deployment checks).
+env:
+  APP_BASE_URL: https://waxwatch.example.com
+  NEXT_PUBLIC_APP_NAME: WaxWatch
+  NEXT_PUBLIC_RELEASE_VERSION: ci
+  NEXT_PUBLIC_SENTRY_DSN: https://examplePublicKey@o0.ingest.sentry.io/0
+  SENTRY_DSN: https://exampleSecretKey@o0.ingest.sentry.io/0
+  AWS_REGION: us-east-1
+  AWS_SECRETS_PREFIX: /waxwatch/prod/web
+  SESSION_COOKIE_NAME: waxwatch_session
+  TRUSTED_PROXY_CIDRS: 10.0.0.0/16
+  LOG_LEVEL: info
+  NEXT_PUBLIC_API_BASE_URL: /api
+  CSP_CONNECT_SRC: ""
+  CSP_STYLE_SRC: ""
+
+# Layout: three independent jobs run in parallel (static/contract checks, unit tests, and
+# build + browser suites); `build-and-test` aggregates them under the historical check name so
+# branch protection keeps requiring a single, stable check.
 jobs:
-  build-and-test:
+  checks:
     runs-on: ubuntu-latest
-    env:
-      APP_BASE_URL: https://waxwatch.example.com
-      NEXT_PUBLIC_APP_NAME: WaxWatch
-      NEXT_PUBLIC_RELEASE_VERSION: ci
-      NEXT_PUBLIC_SENTRY_DSN: https://examplePublicKey@o0.ingest.sentry.io/0
-      SENTRY_DSN: https://exampleSecretKey@o0.ingest.sentry.io/0
-      AWS_REGION: us-east-1
-      AWS_SECRETS_PREFIX: /waxwatch/prod/web
-      SESSION_COOKIE_NAME: waxwatch_session
-      TRUSTED_PROXY_CIDRS: 10.0.0.0/16
-      LOG_LEVEL: info
-      NEXT_PUBLIC_API_BASE_URL: /api
-      CSP_CONNECT_SRC: ""
-      CSP_STYLE_SRC: ""
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Use Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: "frontend/.nvmrc"
           cache: "npm"
@@ -67,7 +72,7 @@ jobs:
       - name: Detect API/route-page changes
         if: github.event_name == 'pull_request'
         id: api_shape_paths
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         with:
           filters: |
             api_or_routes:
@@ -82,7 +87,7 @@ jobs:
       - name: Detect SSE changes
         if: github.event_name == 'pull_request'
         id: sse_paths
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         with:
           filters: |
             sse_related:
@@ -109,10 +114,48 @@ jobs:
         if: github.event_name == 'pull_request'
         run: npm run docs:route-status-gate
 
+  # Not sharded: the whole vitest suite takes ~20-30s on a hosted runner and this job finishes well
+  # before `e2e` (the critical path), so shards + a merge job would only add install/merge overhead.
+  unit-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
+
+      - name: Use Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: "frontend/.nvmrc"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
       - name: Unit tests + coverage gates
         env:
           NODE_ENV: test
         run: npm run test:coverage
+
+  # Production build plus everything that needs it. Not sharded: the Playwright suites run in ~10s,
+  # so splitting them would only duplicate the build (or add an artifact round-trip).
+  e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v6.0.2
+
+      - name: Use Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: "frontend/.nvmrc"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install dependencies
+        run: npm ci --include=dev
 
       - name: Build
         env:
@@ -122,8 +165,10 @@ jobs:
       - name: Bundle-size budget
         run: npm run bundle:check
 
+      # playwright.config.ts defines no projects, so every spec runs on the default Chromium browser;
+      # installing only Chromium (and its system deps) skips the Firefox/WebKit downloads and apt packages.
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps
+        run: npx playwright install --with-deps chromium
 
       - name: E2E tests (smoke-only baseline + route-depth suite)
         run: npm run e2e:ci
@@ -136,3 +181,22 @@ jobs:
 
       - name: Release checklist
         run: npm run release:checklist
+
+  # Stable required check: passes only when every job above passed.
+  build-and-test:
+    runs-on: ubuntu-latest
+    needs: [checks, unit-tests, e2e]
+    if: ${{ !cancelled() }}
+
+    steps:
+      - name: Require all frontend CI jobs to succeed
+        working-directory: .
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+        run: |
+          echo "checks=$CHECKS_RESULT unit-tests=$UNIT_RESULT e2e=$E2E_RESULT"
+          test "$CHECKS_RESULT" = "success"
+          test "$UNIT_RESULT" = "success"
+          test "$E2E_RESULT" = "success"

@@ -5,7 +5,7 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -66,6 +66,80 @@ if not DATABASE_URL:
 from app.api.deps import get_db  # noqa: E402
 from app.db.models import User  # noqa: E402
 from app.main import create_app  # noqa: E402
+
+SHARD_INDEX_ENV = "PYTEST_SHARD_INDEX"
+SHARD_TOTAL_ENV = "PYTEST_SHARD_TOTAL"
+
+
+def shard_settings_from_env(environ: Mapping[str, str] = os.environ) -> tuple[int, int] | None:
+    """Return the (1-based index, total) CI shard selection, or None when sharding is off.
+
+    Both variables unset/empty (or a total of 1) means "run everything", which keeps
+    `make ci-db-tests` / `make ci-local` unsharded by default.
+    """
+    raw_index = (environ.get(SHARD_INDEX_ENV) or "").strip()
+    raw_total = (environ.get(SHARD_TOTAL_ENV) or "").strip()
+    if not raw_index and not raw_total:
+        return None
+    try:
+        index = int(raw_index)
+        total = int(raw_total)
+    except ValueError as exc:
+        raise pytest.UsageError(
+            f"{SHARD_INDEX_ENV} and {SHARD_TOTAL_ENV} must both be integers (got {raw_index!r}/{raw_total!r})"
+        ) from exc
+    if total < 1 or not 1 <= index <= total:
+        raise pytest.UsageError(
+            f"{SHARD_INDEX_ENV} must be within 1..{SHARD_TOTAL_ENV} (got {index}/{total})"
+        )
+    if total == 1:
+        return None
+    return index, total
+
+
+def assign_files_to_shards(file_weights: dict[str, int], total: int) -> dict[str, int]:
+    """Deterministically map test files to 1-based shards, balancing by weight.
+
+    Greedy longest-processing-time: heaviest files first (ties broken by path), each placed on
+    the currently lightest shard (ties broken by lowest shard index). Whole files stay together so
+    module-level fixtures and intra-file ordering behave exactly as in an unsharded run.
+    """
+    loads = [0] * total
+    assignment: dict[str, int] = {}
+    for path, weight in sorted(file_weights.items(), key=lambda kv: (-kv[1], kv[0])):
+        shard = min(range(total), key=lambda i: (loads[i], i))
+        loads[shard] += weight
+        assignment[path] = shard + 1
+    return assignment
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # trylast: run after marker (-m) / keyword (-k) deselection so weights reflect the selected tests.
+    settings = shard_settings_from_env()
+    if settings is None:
+        return
+    index, total = settings
+
+    file_weights: dict[str, int] = {}
+    for item in items:
+        path = item.nodeid.split("::", 1)[0]
+        file_weights[path] = file_weights.get(path, 0) + 1
+    assignment = assign_files_to_shards(file_weights, total)
+
+    selected = [item for item in items if assignment[item.nodeid.split("::", 1)[0]] == index]
+    deselected = [item for item in items if assignment[item.nodeid.split("::", 1)[0]] != index]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = selected
+
+
+def pytest_report_header(config: pytest.Config) -> str | None:
+    settings = shard_settings_from_env()
+    if settings is None:
+        return None
+    return f"ci shard: {settings[0]}/{settings[1]} (files balanced by test count)"
+
 
 engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True)
 SessionTesting = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)

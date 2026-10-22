@@ -37,6 +37,12 @@ Use the same commands that CI uses before opening a pull request (and before req
 
 The CI workflow (`.github/workflows/backend-ci.yml`) is intentionally triggered by four events and split into granular required-check jobs (`static-checks` and `db-tests`) so contributors get faster first-failure feedback:
 
+- `static-checks`: `make ci-static-checks` (the gate every other test job waits on).
+- `db-tests-shard (i/3)`: matrix jobs that each run `make ci-db-tests PYTEST_SHARD_INDEX=i PYTEST_SHARD_TOTAL=3 COVERAGE_FAIL_UNDER=0 CI_COVERAGE_FILE=/app/coverage-shards/shard-i.coverage` and upload that coverage data file. `tests/conftest.py` (`pytest_collection_modifyitems`) assigns whole test files to shards deterministically, balanced by test count, so the shards' union is exactly the unsharded collection. Shard 1 also runs the Celery integration guardrail/provenance checks; shard 3 runs the targeted `tests/test_rate_limit.py` regression pass.
+- `base-coverage` (pull requests only, runs in parallel with everything else): produces the base-branch `coverage.json` baseline. It is cached by the base revision's `backend/` tree hash (`git rev-parse <base>:backend`); push-to-`main` runs seed that cache from their combined coverage, so the base suite is only re-run on a cache miss.
+- `db-tests` (aggregate; keep this as the required check): fails unless `static-checks` and every shard succeeded, then runs `make ci-coverage-combine` (combine shard data, enforce the **85%** floor on the merged result, write `coverage.json`) and, on pull requests, `scripts/check_coverage_regression.py` against the `base-coverage` baseline. It also verifies the perf smoke/release-gate harness files.
+- Changing the shard count means updating `strategy.matrix.shard`, `PYTEST_SHARD_TOTAL`, and the expected shard-file count in the `db-tests` combine step together. Locally, `make ci-db-tests` / `make ci-local` stay unsharded unless the shard variables are set.
+
 - `pull_request` targeting `main`: primary branch-protection gate for code review merges.
 - `push` to `main`: post-merge protection to ensure the default branch always satisfies the full CI suite.
 - `workflow_dispatch`: manual reruns/debugging for flaky infrastructure or one-off verification.
@@ -102,11 +108,11 @@ Deploy-blocking release validation uses `.github/workflows/backend-release-gates
   - `app/services/matching.py`
   - `app/core/token_crypto.py`
 - On pull-request CI runs, the workflow enforces non-regression with this exact sequence:
-  1. Run `make ci-local` on the PR revision to generate `coverage.json`.
-  2. Fetch and check out the base branch commit from `github.base_ref`.
-  3. Run `make ci-local` on the base revision to generate `coverage.base.json`.
-  4. Check out the PR revision again, restore `coverage.json`, then run `python scripts/check_coverage_regression.py`.
-  5. Fail the job when total coverage or any listed high-risk module coverage is lower than base.
+  1. Run the sharded DB suite (`db-tests-shard` matrix) on the PR revision and combine the shard coverage data into `coverage.json` (`make ci-coverage-combine`, which also enforces the 85% floor on the merged result).
+  2. In parallel (`base-coverage`), fetch the base branch commit from `github.base_ref` and restore its cached `coverage.json` (keyed by the base `backend/` tree hash) or, on a cache miss, check it out and run the DB pytest pass to generate it; publish it as `coverage.base.json`.
+  3. In the aggregate `db-tests` job, run `python scripts/check_coverage_regression.py` with both files.
+  4. Fail the job when total coverage or any listed high-risk module coverage is lower than base.
+- `pyproject.toml` sets `[tool.coverage.run] relative_files = true` so coverage data recorded inside the `api-test` container (`/app`) combines cleanly on the CI runner.
 - CI triggers run once per PR update (`pull_request`) and also on direct pushes to `main` (`push`), avoiding duplicate push+PR runs for feature branches.
 - `make ci-local` is the canonical CI contract target invoked by both local developers and GitHub Actions.
 - `make ci-db-tests` remains the database-backed test segment used by `ci-local` and must keep migration + drift + full pytest discovery with coverage.
